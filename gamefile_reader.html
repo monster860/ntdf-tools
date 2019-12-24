@@ -360,15 +360,74 @@ async function set_sbv2(blob) {
 		midi_elem.textContent = mtext;
 		contentelem.appendChild(midi_elem);
 		
+		let channel_toggles = [];
+		let channel_labels = [];
+		let channel_toggles_table = document.createElement("table");
+		let channel_toggles_channels = document.createElement("tr");
+		let channel_toggles_checkboxes = document.createElement("tr");
+		for(let i = 0; i < 16; i++) {
+			let channelnum = document.createElement("td");
+			channelnum.textContent = i.toString(16);
+			channel_labels.push(channelnum);
+			channel_toggles_channels.appendChild(channelnum);
+			let channelboxcont = document.createElement("td");
+			channelnum.style.textAlign = "center";
+			let channelboxcheck = document.createElement("input");
+			
+			channelboxcheck.type = "checkbox";
+			channelboxcheck.checked = true;
+			channelboxcont.appendChild(channelboxcheck);
+			channel_toggles_checkboxes.appendChild(channelboxcont);
+			channel_toggles.push(channelboxcheck);
+			channelboxcheck.addEventListener("dblclick", () => {
+				let amt_on = 0;
+				let amt_off = 0;
+				for(let toggle of channel_toggles) {
+					if(toggle.checked) amt_on++;
+					else amt_off++;
+				}
+				for(let toggle of channel_toggles) {
+					toggle.checked = amt_off > amt_on;
+				}
+			});
+		}
+		channel_toggles_table.appendChild(channel_toggles_channels);
+		channel_toggles_table.appendChild(channel_toggles_checkboxes);
+		contentelem.appendChild(channel_toggles_table);
+		
+		let reverb_toggle = document.createElement("input");
+		reverb_toggle.type = "checkbox";
+		reverb_toggle.checked = true;
+		contentelem.appendChild(reverb_toggle);
+		contentelem.appendChild(document.createTextNode("Reverb"));
+		contentelem.appendChild(document.createElement("br"));
+		
+		function calc_channel_mask() {
+			let mask = 0;
+			for(let i = 0; i < 16; i++) {
+				if(channel_toggles[i].checked)
+					mask |= (1 << i);
+			}
+			return mask;
+		}
+		
+		let playback_display = document.createElement("pre");
 		let play_button = document.createElement("input");
 		play_button.type = "button";
 		play_button.value = "Play";
 		play_button.addEventListener("click", () => {
 			if(stop_playing) { stop_playing(); stop_playing = null; }
-			/*
-				// update playback display
-				let ptext = `   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n  `;
-				for(let channel of channels) {
+			
+			let player = new MidiPlayer(sbv2, track, audio_context);
+			player.channel_mask = calc_channel_mask();
+			player.reverb_enabled = reverb_toggle.checked;
+			player.play();
+			console.log(player);
+			
+			let do_vis = () => {
+				if(player.curr_timeout == null) return;
+				for(let i = 0; i < 16; i++) {
+					let channel = player.channels[i];
 					let is_playing = false;
 					for(let note of channel) {
 						if(note) {
@@ -376,18 +435,20 @@ async function set_sbv2(blob) {
 							break;
 						}
 					}
-					ptext += is_playing ? '** ' : '   ';
+					let vis = channel_labels[i];
+					vis.style.backgroundColor = is_playing ? "#ccaacc" : "transparent";
 				}
-				ptext += '\n  ' + channel_programs.map(i => {return i != undefined ? i.toString(16).padStart(2,0) : '  ';}).join(" ") + '\n  ';
-				playback_display.textContent = ptext;
-			};*/
-			
-			let player = new MidiPlayer(sbv2, track, audio_context);
-			player.play();
+				player.channel_mask = calc_channel_mask();
+				player.reverb_enabled = reverb_toggle.checked;
+				setTimeout(do_vis, 50);
+			};
+			do_vis();
 			
 			stop_playing = () => {
 				player.stop();
-				playback_display.textContent = "";
+				for(let vis of channel_labels) {
+				vis.style.backgroundColor = "transparent";
+				}
 			};
 		});
 		contentelem.appendChild(play_button);
@@ -417,7 +478,8 @@ async function set_sbv2(blob) {
 			let ctx = new OfflineAudioContext(2, (track.seconds + 5)*48000, 48000);
 				
 			let player = new MidiPlayer(sbv2, track, ctx);
-			player.channel_mask = 0xFFFF;
+			player.channel_mask = calc_channel_mask();
+			player.reverb_enabled = reverb_toggle.checked;
 			player.play();
 			
 			let buf = await ctx.startRendering();
@@ -687,8 +749,6 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + "_" + chan + '.
 			}
 		});
 		contentelem.appendChild(vis_button);
-		
-		let playback_display = document.createElement("pre");
 		contentelem.appendChild(playback_display);
 		
 	}
@@ -807,13 +867,15 @@ class MidiPlayer {
 		this.current_time = this.ctx.currentTime;
 		this.event_index = 0;
 		this.channel_mask = 0xFFFF;
+		this.reverb_enabled = true;
 	}
 	
 	stop() {
 		if(this.curr_timeout != null) clearTimeout(this.curr_timeout);
+		this.curr_timeout = null;
 		for(let i = 0; i < this.channels.length; i++) {
 			for(let j = 0; j < this.channels[i].length; j++) {
-				if(this.channels[i][j]) {
+				if(this.channels[i][j] instanceof Object) {
 					this.channels[i][j].source_node.stop();
 					this.channels[i][j] = null;
 				}
@@ -831,20 +893,22 @@ class MidiPlayer {
 		let playing_note = this.channels[channel][note_num];
 		if(playing_note) {
 			this.channels[channel][note_num] = null;
-			let curr_percent = 1;//playing_note.gain_node.gain.value / playing_note.base_gain;
-			let time_to_silence = 0;
-			let release_rate = playing_note.region.adsr2 & 0x1F;
-			let release_mode = (playing_note.region.adsr2 >> 5) & 0x1;
-			playing_note.release_gain_node.gain.setValueAtTime(1, this.current_time);
-			if(release_mode) {
-				let time_constant = 0x7FFFFFFF / adsr_rates[((release_rate^0x1f)*4)-0xC+32] / 48000;
-				playing_note.release_gain_node.gain.setTargetAtTime(0, this.current_time, time_constant);
-				time_to_silence = time_constant * 4;
-			} else {
-				time_to_silence = curr_percent * 0x7FFFFFFF / (1 << (0x1f - release_rate)) / 48000;
-				playing_note.release_gain_node.gain.linearRampToValueAtTime(0, this.current_time + time_to_silence);
+			if(typeof playing_note == "object") {
+				let curr_percent = 1;//playing_note.gain_node.gain.value / playing_note.base_gain;
+				let time_to_silence = 0;
+				let release_rate = playing_note.region.adsr2 & 0x1F;
+				let release_mode = (playing_note.region.adsr2 >> 5) & 0x1;
+				playing_note.release_gain_node.gain.setValueAtTime(1, this.current_time);
+				if(release_mode) {
+					let time_constant = 0x7FFFFFFF / adsr_rates[((release_rate^0x1f)*4)-0xC+32] / 48000;
+					playing_note.release_gain_node.gain.setTargetAtTime(0, this.current_time, time_constant);
+					time_to_silence = time_constant * 4;
+				} else {
+					time_to_silence = curr_percent * 0x7FFFFFFF / (1 << (0x1f - release_rate)) / 48000;
+					playing_note.release_gain_node.gain.linearRampToValueAtTime(0, this.current_time + time_to_silence);
+				}
+				playing_note.source_node.stop(this.current_time + time_to_silence);
 			}
-			playing_note.source_node.stop(this.current_time + time_to_silence);
 		}
 	};
 	
@@ -876,7 +940,7 @@ class MidiPlayer {
 						playing_note.gain_node.gain.setValueAtTime(0, this.current_time);
 						if(!(region.flags & 0x10))
 							playing_note.gain_node.connect(this.channel_gains[event.channel]);
-						if(region.flags & 0x01)
+						if((region.flags & 0x01) && this.reverb_enabled)
 							playing_note.gain_node.connect(this.channel_gains_reverb[event.channel]);
 						playing_note.release_gain_node.connect(playing_note.gain_node);
 						playing_note.source_node.buffer = region.sound.buffer;
@@ -937,6 +1001,8 @@ class MidiPlayer {
 						this.channels[event.channel][note_num] = playing_note;
 					} else if(!region) {
 						console.warn("No region! (Channel " + (event.channel) + ", program " + program + ", note " + note_num + ")");
+					} else {
+						this.channels[event.channel][note_num] = true;
 					}
 					
 				} else if(event.type == "note_off") { // note off event (this does not follow the midi standard... **GOD DAMN IT SONY WHY CANT YOU FOLLOW STANDARDS** (this music format is a sony thing not an idol minds thing))
@@ -1087,15 +1153,36 @@ class SBv2Decoder {
 							ticks
 						});
 					} else if((event_type & 0xF0) == 0x90) { // note on event
-						track.events.push({
-							type:"note_on",
-							channel: event_type & 0xF,
-							note: file[current_midi_pointer++],
-							velocity: file[current_midi_pointer++]/127,
-							seconds,
-							ticks,
-							note_off: null
-						});
+						let note = file[current_midi_pointer++];
+						let velocity = file[current_midi_pointer++]/127;
+						if(velocity == 0) {
+							let off_event;
+							track.events.push(off_event = {
+								type:"note_off",
+								channel: event_type & 0xF,
+								note,
+								velocity: 0.5,
+								seconds,
+								ticks
+							});
+							for(let i = track.events.length-1; i >= 0; i--) {
+								let other_event = track.events[i];
+								if(other_event.type == "note_on" && other_event.channel == off_event.channel && other_event.note == off_event.note && !other_event.note_off) {
+									other_event.note_off = off_event;
+									break;
+								}
+							}
+						} else {
+							track.events.push({
+								type:"note_on",
+								channel: event_type & 0xF,
+								note,
+								velocity,
+								seconds,
+								ticks,
+								note_off: null
+							});
+						}
 					} else if((event_type & 0xF0) == 0xD0) { // note off event (this does not follow the midi standard... **GOD DAMN IT SONY WHY CANT YOU FOLLOW STANDARDS** (this music format is a sony thing not an idol minds thing))
 						let off_event;
 						track.events.push(off_event = {
@@ -1159,6 +1246,8 @@ class SBv2Decoder {
 						// Sysex event. What's it do? I have no idea! now let's skip it.
 						// maybe one day I'll look at the diassembly a bit closer and see
 						while(file[current_midi_pointer++] != 0xF7 && current_midi_pointer < file.length);
+					} else if(event_type == 0xF3) {
+						console.log("Song select: " + file[current_midi_pointer++]);
 					} else {
 						console.warn(new Error('Unrecognized MIDI event ' + (event_type ? event_type.toString(16) : event_type) + ' at 0x' + current_midi_pointer.toString(16) + ' (' + current_midi_pointer + ')'));
 						break;
