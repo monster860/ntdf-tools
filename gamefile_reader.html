@@ -484,7 +484,7 @@ async function set_sbv2(blob) {
 			player.play();
 			
 			let buf = await ctx.startRendering();
-			saveAs(new Blob([to_wav(buf)], {type:'audio/wav'}), sbv2.tag + "-" + i + ".wav");
+			saveAs(new Blob([to_wav(buf)], {type:'audio/wav'}), sbv2.tag + i + ".wav");
 		});
 		contentelem.appendChild(savewav_button);
 		
