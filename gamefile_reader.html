@@ -389,6 +389,7 @@ async function set_sbv2(blob) {
 				for(let toggle of channel_toggles) {
 					toggle.checked = amt_off > amt_on;
 				}
+				channelboxcheck.checked = true;
 			});
 		}
 		channel_toggles_table.appendChild(channel_toggles_channels);
