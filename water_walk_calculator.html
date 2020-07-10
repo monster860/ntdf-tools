@@ -1,0 +1,63 @@
+<html>
+<head>
+<script>
+const vel_multiplier = 0.03333333507;
+window.addEventListener("DOMContentLoaded", () => {
+	console.log("hi");
+	let floor_height_elem = document.getElementById("floor_height");
+	let y_elem = document.getElementById("player_y");
+	let yvel_elem = document.getElementById("player_yvel");
+	function update() {
+		console.log("changed");
+		let floor_height = +floor_height_elem.value;
+		let y = +y_elem.value;
+		let yvel = +yvel_elem.value;
+		let frame = 0;
+		let text = "";
+		let gravity = 0.319999695;
+		while(y >= floor_height) {
+			let haf = y - floor_height;
+			frame++;
+			yvel -= gravity;
+			y += yvel * vel_multiplier;
+			text += frame + ": " + y + ", " + yvel + "\n";
+			console.log(frame);
+			let ty = y + 2.913897349333333;
+			let tyvel = -8;
+			haf = y - floor_height;
+			while(haf >= 0.5) {
+				tyvel -= gravity;
+				ty += tyvel * vel_multiplier;
+				haf = ty - floor_height;
+				console.log(haf + ", " + tyvel + ", ");
+			}
+			console.log("clank");
+			tyvel = 0;
+			haf = ty - floor_height;
+			while(haf > 0.1 || tyvel != 0) {
+				if(haf > 0.1) tyvel -= gravity;
+				ty += tyvel * vel_multiplier;
+				if(haf <= 0.1) tyvel = 0;
+				haf = ty - floor_height;
+			}
+			if((ty - floor_height) > 0.085) {
+				text += "Good frame " + (ty - floor_height) + "\n";
+			}
+		}
+		document.getElementById("out").textContent = text;
+	}
+	floor_height_elem.addEventListener("input", update);
+	y_elem.addEventListener("input", update);
+	yvel_elem.addEventListener("input", update);
+	update();
+});
+</script>
+</head>
+<body>
+<h1> Water walk calculator</h1>
+<div>Floor height: <input id="floor_height" type="number" step="any" value="42.81241608"></div>
+<div>Player Y: <input id="player_y" type="number" step="any" value="56.30275345"></div>
+<div>Player Y velocity: <input id="player_yvel" type="number" step="any" value="-0.3166695535"></div>
+<pre id="out"></pre>
+</body>
+</html>
