@@ -2481,6 +2481,99 @@ ${mat_def_str.join("\n")}`
 		let pre = document.createElement("pre");
 		pre.textContent = text + endtext;
 		contentelem.appendChild(pre);
+	} else if(!force_hex && file[3] == 0x1 && file[4] == 0xe8 && file[5] == 0x3) {
+		contentelem.innerHTML = "";
+		
+		let total = dv.getUint16(12 + header_size, true);
+		
+		let pre = document.createElement("pre");
+		let text = "Header:\n\n";
+		text += "text start: " + dv.getUint32(8 + header_size, true).toString(16) + "\n";
+		text += "entries: " + total.toString(16) + "\n";
+		text += "dunno: " + dv.getUint16(14 + header_size, true).toString(16) + "\n\n";
+		
+		for(let i = 0; i < total; i++) {
+			let ofs = 16 + header_size + (i * 12);
+			let name_ptr = dv.getUint32(ofs, true);
+			let content_ptr = dv.getUint32(ofs+4, true);
+			let something = dv.getUint32(ofs+8, true);
+			
+			let name = "";
+			for(let j = name_ptr+header_size; j < file.length; j++) {
+				if(!file[j]) break;
+				if(file[j] == 0x0A) {
+					name += "\n";
+				} else if(file[j] == 1) {
+					let thing = [file[j+3], file[j+4]-2, file[j+2]-2];
+					let amount = file[j+1]-2;
+					j += 5;
+					for(let k = 0; k < amount; k++) {
+						let part = [];
+						for(let l = 0; l < 4; l++) {
+							let b = file[j];
+							j++;
+							if(b == 0xFD) {
+								let b2 = file[j];
+								if(b2 == 2) {
+									part.push(0xFD);
+								} else if(((b2 - 0x40) & 0xFF) < 0x21) {
+									part.push((b2 - 0x40) & 0xFF);
+								} else {
+									part.push(0);
+								}
+								j++;
+							} else {
+								part.push(b);
+							}
+						}
+							thing.push(part);
+					}
+					j--;
+					name += JSON.stringify(thing);
+				} else {
+					name += dos_chars[file[j]];
+				}
+			}
+			let content = "";
+			for(let j = content_ptr+header_size; j < file.length; j++) {
+				if(!file[j]) break;
+				if(file[j] == 0x0A) {
+					content += "\n";
+				} else if(file[j] == 1) {
+					let thing = [file[j+3], file[j+4]-2, file[j+2]-2];
+					let amount = file[j+1]-2;
+					j += 5;
+					for(let k = 0; k < amount; k++) {
+						let part = [];
+						for(let l = 0; l < 4; l++) {
+							let b = file[j];
+							j++;
+							if(b == 0xFD) {
+								let b2 = file[j];
+								if(b2 == 2) {
+									part.push(0xFD);
+								} else if(((b2 - 0x40) & 0xFF) < 0x21) {
+									part.push((b2 - 0x40) & 0xFF);
+								} else {
+									part.push(0);
+								}
+								j++;
+							} else {
+								part.push(b);
+							}
+						}
+							thing.push(part);
+					}
+					j--;
+					content += JSON.stringify(thing);
+				} else {
+					content += dos_chars[file[j]];
+				}
+			}
+			text += `0x${i.toString(16)} (${i}) (name ptr: ${name_ptr.toString(16)} content ptr:  ${content_ptr.toString(16)})\nsomething: ${something.toString(16)}\n${name}\n${content}\n\n`;
+		}
+		pre.textContent = text;
+		contentelem.appendChild(pre);
 	} else {
 	
 		contentelem.innerHTML = "";
