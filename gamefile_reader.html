@@ -1403,6 +1403,15 @@ Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
 	
 	let sound = decode_adpcm(file, sound_start, sound_start+sound_length, sample_rate);
+	
+	let savewav_button = document.createElement("input");
+	savewav_button.type = "button";
+	savewav_button.value = "Save .wav";
+	savewav_button.addEventListener("click", async () => {
+		saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+	});
+	contentelem.appendChild(savewav_button);
+	
 	let source = audio_context.createBufferSource();
 	source.buffer = sound.buffer;
 	source.connect(audio_context.destination);
@@ -1430,6 +1439,15 @@ Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
 	
 	let sound = decode_adpcm(file, sound_start, file.length, sample_rate);
+	
+	let savewav_button = document.createElement("input");
+	savewav_button.type = "button";
+	savewav_button.value = "Save .wav";
+	savewav_button.addEventListener("click", async () => {
+		saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+	});
+	contentelem.appendChild(savewav_button);
+	
 	let source = audio_context.createBufferSource();
 	source.buffer = sound.buffer;
 	source.connect(audio_context.destination);
