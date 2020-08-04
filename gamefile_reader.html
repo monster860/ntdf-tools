@@ -1148,9 +1148,9 @@ class MidiPlayer {
 					if(control_function == 0x7) {
 						this.channel_gains[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
 						this.channel_gains_reverb[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
-					} else {
-						console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
-					}
+					} // else {
+						//console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
+					// }
 				} else if(event.type == "pitch_bend") { // Pitch bend
 					console.log(`Pitch shift ${event.bend}`);
 				} else if(event.type == "end") { // Meta event
