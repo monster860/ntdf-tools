@@ -957,6 +957,15 @@ Sound length: ${sound_length}
 			});
 			button.style.marginLeft = "40px";
 			contentelem.appendChild(button);
+			
+			let savewav_button = document.createElement("input");
+			savewav_button.type = "button";
+			savewav_button.value = "Save .wav";
+			savewav_button.addEventListener("click", async () => {
+				let sound = region_obj.sound;
+				saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+			});
+			contentelem.appendChild(savewav_button);
 		}
 	}
 }
