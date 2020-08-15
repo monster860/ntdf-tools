@@ -437,6 +437,8 @@ async function load_gamefile() {
 			}
 		}
 	}
+
+	log ("Done loading");
 }
 
 async function set_sbv2(blob) {
@@ -953,6 +955,15 @@ Sound length: ${sound_length}
 			});
 			button.style.marginLeft = "40px";
 			contentelem.appendChild(button);
+			
+			let savewav_button = document.createElement("input");
+			savewav_button.type = "button";
+			savewav_button.value = "Save .wav";
+			savewav_button.addEventListener("click", async () => {
+				let sound = region_obj.sound;
+				saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+			});
+			contentelem.appendChild(savewav_button);
 		}
 	}
 }
@@ -1135,9 +1146,9 @@ class MidiPlayer {
 					if(control_function == 0x7) {
 						this.channel_gains[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
 						this.channel_gains_reverb[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
-					} else {
-						console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
-					}
+					} // else {
+						//console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
+					// }
 				} else if(event.type == "pitch_bend") { // Pitch bend
 					console.log(`Pitch shift ${event.bend}`);
 				} else if(event.type == "end") { // Meta event
@@ -1403,6 +1414,15 @@ Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
 	
 	let sound = decode_adpcm(file, sound_start, sound_start+sound_length, sample_rate);
+	
+	let savewav_button = document.createElement("input");
+	savewav_button.type = "button";
+	savewav_button.value = "Save .wav";
+	savewav_button.addEventListener("click", async () => {
+		saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+	});
+	contentelem.appendChild(savewav_button);
+	
 	let source = audio_context.createBufferSource();
 	source.buffer = sound.buffer;
 	source.connect(audio_context.destination);
@@ -1430,6 +1450,15 @@ Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
 	
 	let sound = decode_adpcm(file, sound_start, file.length, sample_rate);
+	
+	let savewav_button = document.createElement("input");
+	savewav_button.type = "button";
+	savewav_button.value = "Save .wav";
+	savewav_button.addEventListener("click", async () => {
+		saveAs(new Blob([to_wav(sound.buffer)], {type:'audio/wav'}), "download.wav");
+	});
+	contentelem.appendChild(savewav_button);
+	
 	let source = audio_context.createBufferSource();
 	source.buffer = sound.buffer;
 	source.connect(audio_context.destination);
