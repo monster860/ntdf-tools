@@ -2160,6 +2160,8 @@ mesh.materials.append(mat)
 `);
 			}
 			
+
+
 			return `import bpy
 import base64
 import io
@@ -2174,8 +2176,6 @@ uv_in = (${uvs_str.join(",")})
 scene = bpy.context.scene
 mesh = bpy.data.meshes.new("${escaped_filename}")
 mesh.from_pydata(verts, [], faces)
-for i in range(0, ${total_faces}):
-	mesh.polygons[i].material_index = mats_index[i]
 
 colors_rgb = mesh.vertex_colors.new(name="Col")
 colors_a = mesh.vertex_colors.new(name="Alpha")
@@ -2192,7 +2192,10 @@ scene.collection.objects.link(obj)
 
 mesh.materials.clear()
 
-${mat_def_str.join("\n")}`
+${mat_def_str.join("\n")}
+
+for i in range(0, ${total_faces}):
+	mesh.polygons[i].material_index = mats_index[i]`
 		}
 		
 		if(origin_total > 0) {
