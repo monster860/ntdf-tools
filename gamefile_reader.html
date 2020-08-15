@@ -2575,8 +2575,15 @@ ${mat_def_str.join("\n")}`
 		pre.textContent = text;
 		contentelem.appendChild(pre);
 	} else {
-	
 		contentelem.innerHTML = "";
+		let save_button = document.createElement("input");
+		save_button.type = "button";
+		save_button.value = "Save";
+		save_button.addEventListener("click", () => {
+			let filename = prompt("filename?");
+			if(filename) saveAs(blob.slice(header_size), filename);
+		});
+		contentelem.appendChild(save_button);
 		let pre = document.createElement("pre");
 		let text = "HEADER:\n";
 		for(let i = 0; i < header_size; i += 16) {
