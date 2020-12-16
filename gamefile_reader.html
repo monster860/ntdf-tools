@@ -336,54 +336,79 @@ async function load_gamefile() {
 				let indent = 0;
 				while(curr_addr < part.length) {
 					if(part[curr_addr] == 0x49 && part[curr_addr+1] == 0x44 && part[curr_addr+2] == 0x4D) {
-						let absolute_offset = curr_addr + this_sectors[i]*2048;
-						let size = part_dv.getInt32(curr_addr+8, true);
-						let sub_blob = part_blob.slice(curr_addr, curr_addr+size);
-						let partelem = document.createElement("div");
-						filelist.appendChild(partelem);
-						let tc = "\xa0\xa0IDM " + part[curr_addr+3].toString(16) + " " + part[curr_addr+4].toString(16) + " " + part[curr_addr+5].toString(16) + "[" + (part[curr_addr+4] + part[curr_addr+5] * 256) + "]";
-						for(let i = 0; i < indent; i++) {
-							tc = "\xa0\xa0" + tc;
-						}
-						let this_indent = indent;
-						let ident = [part[curr_addr+3],part[curr_addr+4],part[curr_addr+5]];
-						if(ident[0] == 4 && ident[1] == 4 && ident[2] == 0) {
-							tc += " (Texture)";
-						} else if(ident[0] == 1 && ident[1] == 0 && ident[2] == 0) {
-							tc += " (EOF)";
-							if(indent > 0)
-								indent--;
-						} else if(ident[0] == 4 && ident[1] == 0x25 && ident[2] == 0) {
-							tc += " (Script)";
-						} else if(ident[0] == 1 && ident[1] == 0x13 && ident[2] == 0) {
-							tc += " (Zone Map)";
-						} else if(ident[0] == 1 && (ident[1] == 0x12 || ident[1] == 0x20 || ident[1] == 0x8) && ident[2] == 0) {
-							let header_size = 16 + part_dv.getInt16(curr_addr+6, true);
-							if(part[curr_addr+header_size] == 0x49 && part[curr_addr+header_size+1] == 0x44 && part[curr_addr+header_size+2] == 0x4D) {
-								size = header_size;
-								indent++;
+						(function add_file(file_addr, do_adjust = true) {
+							let absolute_offset = file_addr + this_sectors[i]*2048;
+							let size = part_dv.getInt32(file_addr+8, true);
+							let header_size = part_dv.getInt16(file_addr+6, true) + 16;
+							let sub_blob = part_blob.slice(file_addr, file_addr+size);
+							let partelem = document.createElement("div");
+							filelist.appendChild(partelem);
+							let tc = "\xa0\xa0IDM " + part[file_addr+3].toString(16) + " " + part[file_addr+4].toString(16) + " " + part[file_addr+5].toString(16) + "[" + (part[file_addr+4] + part[file_addr+5] * 256) + "]";
+							for(let i = 0; i < indent; i++) {
+								tc = "\xa0\xa0" + tc;
 							}
-						} else if(ident[0] == 1 && ident[1] == 0xD && ident[2] == 0) {
-							tc += " (Model)";
-						} else if(ident[0] == 1 && ident[1] == 0x3 && ident[2] == 0) {
-							tc += " (Map Geometry)";
-						} else if(ident[0] == 1 && ident[1] == 0x2 && ident[2] == 0) {
-							tc += " (Material List)";
-						}
-						partelem.textContent = tc;
-						if(size <= 0) {
-							console.warn(size + " size at file " + i);
-							break;
-						}
-						curr_addr += size;
-						partelem.addEventListener("click", (e) => {
-							for(let othersel of document.querySelectorAll(".file-item-selected")) {
-								othersel.classList.remove("file-item-selected");
+							let this_indent = indent;
+							let ident = [part[file_addr+3],part[file_addr+4],part[file_addr+5]];
+							if(ident[0] == 4 && ident[1] == 4 && ident[2] == 0) {
+								tc += " (Texture)";
+							} else if(ident[0] == 1 && ident[1] == 0 && ident[2] == 0) {
+								tc += " (EOF)";
+								if(indent > 0)
+									indent--;
+							} else if(ident[0] == 4 && ident[1] == 0x25 && ident[2] == 0) {
+								tc += " (Script)";
+							} else if(ident[0] == 1 && ident[1] == 0x13 && ident[2] == 0) {
+								tc += " (Zone Map)";
+							} else if(ident[0] == 1 && (ident[1] == 0x12 || ident[1] == 0x20 || ident[1] == 0x8) && ident[2] == 0) {
+								if(part[file_addr+header_size] == 0x49 && part[file_addr+header_size+1] == 0x44 && part[file_addr+header_size+2] == 0x4D) {
+									size = header_size;
+									indent++;
+								}
+							} else if(ident[0] == 1 && ident[1] == 0x1D && ident[2] == 0) {
+								tc += " (Object Pack)"
+							} else if(ident[0] == 1 && ident[1] == 0xD && ident[2] == 0) {
+								tc += " (Model)";
+							} else if(ident[0] == 1 && ident[1] == 0x3 && ident[2] == 0) {
+								tc += " (Map Geometry)";
+							} else if(ident[0] == 1 && ident[1] == 0x2 && ident[2] == 0) {
+								tc += " (Material List)";
 							}
-							partelem.classList.add("file-item-selected");
-							set_file(sub_blob, file_entry, e.ctrlKey);
-						});
-						file_entry.push({blob: sub_blob, ident, size, indent: this_indent, offset: absolute_offset});
+							partelem.textContent = tc;
+							if(size <= 0) {
+								console.warn(size + " size at file " + i);
+								return false;
+							}
+							if(do_adjust)
+								curr_addr += size;
+							partelem.addEventListener("click", (e) => {
+								for(let othersel of document.querySelectorAll(".file-item-selected")) {
+									othersel.classList.remove("file-item-selected");
+								}
+								partelem.classList.add("file-item-selected");
+								set_file(sub_blob, file_entry, e.ctrlKey);
+							});
+							file_entry.push({blob: sub_blob, ident, size, indent: this_indent, offset: absolute_offset});
+							if(ident[0] == 1 && ident[1] == 0x1D && ident[2] == 0) {
+								indent += 2;
+								let arr1_size = part_dv.getUint32(file_addr+header_size, true);
+								let arr1_addr = part_dv.getUint32(file_addr+header_size + 0x4, true) + header_size+file_addr;
+								for(let i = 0; i < arr1_size; i++) {
+									let item_div = document.createElement("div");
+									filelist.appendChild(item_div);
+									item_div.textContent = "".padStart(indent*2, "\xa0") + i + ":";
+									let item_elem = part_dv.getUint32(arr1_addr + i*4, true);
+									if(!item_elem) continue;
+									item_elem += header_size+file_addr;
+									let model_addr = part_dv.getUint32(item_elem + 0x1d0, true);
+									let other_addr = part_dv.getUint32(item_elem + 0x1d4, true);
+									console.log(model_addr + ", " + other_addr);
+									if(model_addr) add_file(model_addr + header_size+file_addr, false);
+									if(other_addr) add_file(other_addr + header_size+file_addr, false);
+								}
+								indent -= 2;
+							}
+							return true;
+						})(curr_addr);
 					} else {
 						if(curr_addr % 2048 == 0) {
 							curr_addr += 2048;
@@ -2605,6 +2630,29 @@ for i in range(0, ${total_faces}):
 	}
 }
 
+let PIXEL_STORAGE_FORMATS = [
+	"PSMCT32", "PSMCT42", "PSMCT16",  null,      null,      null, null, null,
+	null,      null,      "PSMCT16S", null,      null,      null, null, null,
+	null,      null,      null,       "PSMT8",   "PSMT4",   null, null, null,
+	null,      null,      null,       "PSMT8H",  null,      null, null, null,
+	null,      null,      null,       null,      "PSMT4HL", null, null, null,
+	null,      null,      null,       null,      "PSMT4HH", null, null, null,
+	"PSMZ32",  "PSMZ24",  "PSMZ16",   "PSMZ16S", null,      null, null, null,
+];
+let CLUT_PIXEL_STORAGE_FORMATS = [
+	"PSMCT32", null, "PSMCT16", null, null, null, null, null,
+	null,      null, "PSMCT16S"
+]
+let TEXTURE_FILTERING_TYPES = [
+	"NEAREST",
+	"LINEAR",
+	"NEAREST_MIPMAP_NEAREST",
+	"NEAREST_MIPMAP_LINEAR",
+	"LINEAR_MIPMAP_NEAREST",
+	"LINEAR_MIPMAP_LINEAR"
+];
+let CLAMP_TYPES = ["REPEAT", "CLAMP", "REGION_CLAMP", "REGION_REPEAT"];
+
 async function extract_materials(blob, parent) {
 	let file = new Uint8Array(await new Response(blob).arrayBuffer());
 	let dv = new DataView(file.buffer);
@@ -2635,46 +2683,121 @@ async function extract_materials(blob, parent) {
 		let mat_offset = mat_list_offset + (0x270 * i);
 		let tex_file_index = file[mat_offset + 0x28];
 		let mat_str = "Material " + i + "\n";
+		let mat_obj = {
+			contexts: [{
+				scroll_x: dv.getFloat32(mat_offset + 0x70, true),
+				scroll_y: dv.getFloat32(mat_offset + 0x74, true),
+			}, {
+				scroll_x: dv.getFloat32(mat_offset + 0x60, true),
+				scroll_y: dv.getFloat32(mat_offset + 0x64, true),
+			}]
+		};
 		let canvas = null;
 		let has_transparency = false;
+		
+		let num_registers = file[mat_offset + 0x1A0];
+		
+		for(let j = 0; j < num_registers; j++) {
+			let register_addr = file[mat_offset + 0x1B8 + j*16]; // should probably actually parse the GIFtag but I don't think there's any other kinds of giftags
+			let context = mat_obj.contexts[register_addr & 1];
+			let register_val = dv.getBigUint64(mat_offset + 0x1B0 + j*16, true);
+			switch(register_addr & 0xFE) {
+			case 0x06:
+				context.tex0 = {
+					tbp0: Number(register_val & 0x3FFFn),
+					tbw: Number((register_val >> 14n) & 0x3Fn),
+					psm: PIXEL_STORAGE_FORMATS[(register_val >> 20n) & 0x3Fn],
+					tw: Number((register_val >> 26n) & 0xFn),
+					th: Number((register_val >> 30n) & 0xFn),
+					tcc: Number((register_val >> 34n) & 0x1n),
+					tfx: ["MODULATE", "DECAL", "HIGHLIGHT", "HIGHLIGHT2"][(register_val >> 35n) & 0x3n],
+					cbp: Number((register_val >> 37n) & 0x3FFFn),
+					cpsm: CLUT_PIXEL_STORAGE_FORMATS[(register_val >> 51n) & 0xFn],
+					csm: ["CSM1","CSM2"][(register_val >> 55n) & 0x1n],
+					csa: Number((register_val >> 56n) & 0x1Fn),
+					cld: Number((register_val >> 61n) & 0x7n)
+				};
+				break;
+			case 0x08:
+				context.clamp = {
+					wms: CLAMP_TYPES[(register_val) & 0x3n],
+					wmt: CLAMP_TYPES[(register_val >> 2n) & 0x3n],
+					minu: Number((register_val >> 4n) & 0x3FFn),
+					maxu: Number((register_val >> 14n) & 0x3FFn),
+					minv: Number((register_val >> 24n) & 0x3FFn),
+					maxv: Number((register_val >> 34n) & 0x3FFn),
+				};
+				break;
+			case 0x14:
+				context.tex1 = {
+					lcm: Number(register_val & 0x1n),
+					mxl: Number((register_val >> 2n) & 0x7n),
+					mmag: TEXTURE_FILTERING_TYPES[(register_val >> 5n) & 0x1n],
+					mmin: TEXTURE_FILTERING_TYPES[(register_val >> 6n) & 0x7n],
+					mtba: Number((register_val >> 9n) & 0x1n),
+					l: Number((register_val >> 19n) & 0x1n),
+					k: (Number((register_val >> 32n) & 0xFFFn) << 20 >> 20) / 16,
+				}
+				break;
+			case 0x34:
+				context.miptbp1 = {
+					tbp1: Number(register_val & 0x3FFFn),
+					tbw1: Number((register_val << 14n) & 0x3Fn),
+					tbp2: Number((register_val << 20n) & 0x3FFFn),
+					tbw2: Number((register_val << 34n) & 0x3Fn),
+					tbp3: Number((register_val << 40n) & 0x3FFFn),
+					tbw3: Number((register_val << 54n) & 0x3Fn),
+				}
+				break;
+			case 0x42:
+				context.alpha = {
+					a: ["Cs", "Cd", "0"][register_val & 0x3n],
+					b: ["Cs", "Cd", "0"][(register_val >> 2n) & 0x3n],
+					c: ["As", "Ad", "FIX"][(register_val >> 4n) & 0x3n],
+					d: ["Cs", "Cd", "0"][(register_val >> 6n) & 0x3n],
+					fix: Number((register_val >> 32n) & 0xFFn) / 0x80,
+				};
+				break;
+			case 0x48:
+			case 0x47:
+				context = mat_obj.contexts[1 - (register_addr & 1)];
+			default:
+				context["unk_" + register_addr.toString(16)] = register_val.toString(16);
+			}
+		}
+		
+		for(let j = 0; j < 2; j++) {
+			let context = mat_obj.contexts[j];
+			mat_str += "\nContext " + (j+1) + ":\n";
+			for(let [regname, reg] of Object.entries(context)) {
+				mat_str += " " + regname + ": " + JSON.stringify(reg) + "\n";
+			}
+		}
+		
 		if(tex_file_index == 0xff) {
-			mat_str += "NO TEXTURE\n";
+			mat_str += "\nNO TEXTURE\n\n";
 		} else {
-			mat_str += "TEXTURE (file " + tex_file_index + ")\n";
+			mat_str += "\nTEXTURE (file " + tex_file_index + ")\n";
 			let tex_descriptor = file.slice(mat_offset + 0x1B0, mat_offset+0x1B8);
+			
+			mat_obj.tbp0 = tex_descriptor[0] | ((tex_descriptor[1] & 0x3f) << 8);
+			mat_obj.tbw = (tex_descriptor[1] >> 6) | ((tex_descriptor[2] & 0xf) << 2);
+			mat_obj.psm = PIXEL_STORAGE_FORMATS[(tex_descriptor[2] >> 4) | ((tex_descriptor[3] & 0x3) << 4)];
+			mat_obj.tw = (tex_descriptor[3] >> 2) & 0xf;
+			mat_obj.th = (tex_descriptor[3] >> 6) | ((tex_descriptor[4] & 0x3) << 2);
+			mat_obj.tcc = (tex_descriptor[4] >> 2) & 0x1;
+			mat_obj.tfx = ["MODULATE", "DECAL", "HIGHLIGHT", "HIGHLIGHT2"][(tex_descriptor[4] >> 3) & 0x3];
+			mat_obj.cbp = (tex_descriptor[4] >> 5) | (tex_descriptor[5] << 3) | ((tex_descriptor[6] & 0x7) << 11);
+			mat_obj.cpsm = CLUT_PIXEL_STORAGE_FORMATS[(tex_descriptor[6] >> 3) & 0xF];
+			mat_obj.csm = ["CSM1","CSM2"][tex_descriptor[6] >> 7];
+			mat_obj.csa = tex_descriptor[7] & 0x1F;
+			mat_obj.cld = tex_descriptor[7] >> 5;
+			
 			mat_str += [...tex_descriptor].map(item => {return item.toString(16).padStart(2,0);}).join(" ") + "\n";
 			let decoder = textures[tex_file_index];
-			let mat_width = undefined;
-			let mat_height = undefined;
+			let mat_width = 1 << mat_obj.tw;
+			let mat_height = 1 << mat_obj.th;
 			let size_byte = tex_descriptor[3];
-			if(size_byte == 0x11) {
-				mat_width = 16; // too lazy to figure out why
-				mat_height = 16;
-			} else if(size_byte == 0x15) {
-				mat_width = 32; // also too lazy to figure out why
-				mat_height = 256;
-			} else {
-				if((size_byte & 0xC3) == 0x01) {
-					mat_height = 256
-				} else if((size_byte & 0xC3) == 0xC1) {
-					mat_height = 128;
-				} else if((size_byte & 0xC3) == 0x81) {
-					mat_height = 64;
-				} else if((size_byte & 0xC3) == 0x41) {
-					mat_height = 32;
-				}
-				if((size_byte & 0x3C) == 0x20) {
-					mat_width = 256;
-				} else if((size_byte & 0x3C) == 0x1C) {
-					mat_width = 128;
-				} else if((size_byte & 0x3C) == 0x18) {
-					mat_width = 64;
-				} else if((size_byte & 0x3c) == 0x14) {
-					mat_width = 32;
-				} else if((size_byte & 0x3C) == 0x10) {
-					mat_width = 16;
-				}
-			}
 			mat_str += mat_width + "x" + mat_height + "\n";
 			if(mat_width == undefined) mat_width = 256;
 			if(mat_height == undefined)mat_height = 256;
@@ -2730,7 +2853,8 @@ async function extract_materials(blob, parent) {
 				has_transparency = decoder.decode(is_4bit, pal_x*2+pal_y*decoder.img_width, in_x, in_y, canvas);
 			}
 		}
-		materials.push({string: mat_str, canvas, has_transparency});
+		Object.assign(mat_obj, {string: mat_str, canvas, has_transparency});
+		materials.push(mat_obj);
 	}
 	return materials
 }
