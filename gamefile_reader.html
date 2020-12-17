@@ -2623,6 +2623,11 @@ for i in range(0, ${total_faces}):
 		for(let i = header_size; i < file.length; i += 16) {
 			let slice = file.slice(i, Math.min(i+16, file.length));
 			let line = (i-header_size).toString(16).padStart(6,0) + " " + [...slice].map(item => {return item.toString(16).padStart(2,0);}).join(" ").padEnd(52) + [...slice].map((item)=>{return dos_chars[item]}).join("");
+			line += "   ";
+			for(let j = 0; j < 4; j++) {
+				if(i+j*4+3 < file.length)
+				line += dv.getFloat32(i + j*4, true).toPrecision(6).padStart(16, " ");
+			}
 			text += line + "\n";
 		}
 		pre.textContent = text;
