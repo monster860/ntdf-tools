@@ -343,7 +343,8 @@ async function load_gamefile() {
 							let sub_blob = part_blob.slice(file_addr, file_addr+size);
 							let partelem = document.createElement("div");
 							filelist.appendChild(partelem);
-							let tc = "\xa0\xa0IDM " + part[file_addr+3].toString(16) + " " + part[file_addr+4].toString(16) + " " + part[file_addr+5].toString(16) + "[" + (part[file_addr+4] + part[file_addr+5] * 256) + "]";
+							let globalid = (part[file_addr+14] + part[file_addr+15] * 256);
+							let tc = "\xa0\xa0IDM " + part[file_addr+3].toString(16) + " " + part[file_addr+4].toString(16) + " " + part[file_addr+5].toString(16) + "[" + (part[file_addr+4] + part[file_addr+5] * 256) + "]" + (globalid ? "{" + globalid + "}" : "");
 							for(let i = 0; i < indent; i++) {
 								tc = "\xa0\xa0" + tc;
 							}
