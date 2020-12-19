@@ -2630,6 +2630,7 @@ for i in range(0, ${total_faces}):
 					let tree_y = dv.getFloat32(part1s_ptr+8, true) + dv.getFloat32(part2s_ptr+4, true);
 					text += `\t\t\t(${tree_x.toFixed(3)}ft, ${tree_y.toFixed(3)}ft)\n`;
 					text += `\t\t\t(${(tree_x*0.3048).toFixed(3)}m, ${(tree_y*0.3048).toFixed(3)}m)\n`;
+					part3s_ptr += 0x10;
 				}
 				part2s_ptr += 0x14;
 			}
