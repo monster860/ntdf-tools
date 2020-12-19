@@ -2603,6 +2603,39 @@ for i in range(0, ${total_faces}):
 		}
 		pre.textContent = text;
 		contentelem.appendChild(pre);
+	} else if(!force_hex && file[3] == 0x1 && file[4] == 0x10 && file[5] == 0x0) {
+		contentelem.innerHTML = "";
+		let pre = document.createElement("pre");
+		contentelem.appendChild(pre);
+		let text = "";
+		let num_part1s = dv.getInt32(header_size, true);
+		let part1s_ptr = dv.getInt32(header_size+4, true);
+		for(let i = 0; i < num_part1s; i++) {
+			let type = dv.getInt32(part1s_ptr + 0x18, true);
+			text += `\nItem ${i} (Type ${type}, 0x${type.toString(16)}):\n`;
+			text += `\t${dv.getFloat32(part1s_ptr+0, true)}\n`;
+			text += `\t${dv.getFloat32(part1s_ptr+4, true)}\n`;
+			text += `\t${dv.getFloat32(part1s_ptr+8, true)}\n`;
+			text += `\t${dv.getFloat32(part1s_ptr+12, true)}\n`;
+			text += `\t${dv.getFloat32(part1s_ptr+28, true)}\n`;
+			let num_part2s = dv.getInt32(part1s_ptr+16, true);
+			let part2s_ptr = dv.getInt32(part1s_ptr+20, true);
+			for(let j = 0; j < num_part2s; j++) {
+				text += `\tItem2 ${j} (${dv.getFloat32(part2s_ptr+4, true)}):\n`;
+				let num_part3s = dv.getInt32(part2s_ptr, true);
+				let part3s_ptr = dv.getInt32(part2s_ptr+16, true);
+				for(let k = 0; k < num_part3s; k++) {
+					text += `\t\tItem3 ${k} (${dv.getFloat32(part3s_ptr, true)})\n`;
+					let tree_x = dv.getFloat32(part1s_ptr+0, true) + dv.getFloat32(part3s_ptr, true);
+					let tree_y = dv.getFloat32(part1s_ptr+8, true) + dv.getFloat32(part2s_ptr+4, true);
+					text += `\t\t\t(${tree_x.toFixed(3)}ft, ${tree_y.toFixed(3)}ft)\n`;
+					text += `\t\t\t(${(tree_x*0.3048).toFixed(3)}m, ${(tree_y*0.3048).toFixed(3)}m)\n`;
+				}
+				part2s_ptr += 0x14;
+			}
+			part1s_ptr += 0x40;
+		}
+		pre.textContent = text;
 	} else {
 		contentelem.innerHTML = "";
 		let save_button = document.createElement("input");
