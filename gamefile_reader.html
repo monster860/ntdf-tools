@@ -2610,8 +2610,11 @@ for i in range(0, ${total_faces}):
 		let text = "";
 		let num_part1s = dv.getInt32(header_size, true);
 		let part1s_ptr = dv.getInt32(header_size+4, true);
+		let type_coords_obj = {}
 		for(let i = 0; i < num_part1s; i++) {
 			let type = dv.getInt32(part1s_ptr + 0x18, true);
+			let coords_list = type_coords_obj[type];
+			if(!coords_list) type_coords_obj[type] = coords_list = [];
 			text += `\nItem ${i} (Type ${type}, 0x${type.toString(16)}):\n`;
 			text += `\t${dv.getFloat32(part1s_ptr+0, true)}\n`;
 			text += `\t${dv.getFloat32(part1s_ptr+4, true)}\n`;
@@ -2630,11 +2633,24 @@ for i in range(0, ${total_faces}):
 					let tree_y = dv.getFloat32(part1s_ptr+8, true) + dv.getFloat32(part2s_ptr+4, true);
 					text += `\t\t\t(${tree_x.toFixed(3)}ft, ${tree_y.toFixed(3)}ft)\n`;
 					text += `\t\t\t(${(tree_x*0.3048).toFixed(3)}m, ${(tree_y*0.3048).toFixed(3)}m)\n`;
+					coords_list.push({
+						name: `obj${type.toString(16)}_${i}_${j}_${k}`,
+						x_ft: tree_x,
+						y_ft: tree_y,
+						x_m: tree_x*0.3048,
+						y_m: tree_y*0.3048,
+					});
 					part3s_ptr += 0x10;
 				}
 				part2s_ptr += 0x14;
 			}
 			part1s_ptr += 0x40;
+		}
+		for(let list of Object.values(type_coords_obj)) {
+			text += "\n";
+			for(let obj of list) {
+				text += `${obj.name},${obj.x_ft},${obj.y_ft},${obj.x_m},${obj.y_m}\n`
+			}
 		}
 		pre.textContent = text;
 	} else {
