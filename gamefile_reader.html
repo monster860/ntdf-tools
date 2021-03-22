@@ -2377,6 +2377,9 @@ for i in range(0, ${total_faces}):
 		
 		let symbols = [];
 		let defined_functions = {};
+		let last_function = 0x100;
+		let first_symbol_string = file.length - header_size;
+		let datasymbol_addrs = new Set();
 		let symbol_table_offset = dv.getUint32(12 + header_size, true) + header_size;
 		let symbol_table_count = dv.getUint32(16 + header_size, true);
 		endtext += "Symbols: \n";
@@ -2386,12 +2389,14 @@ for i in range(0, ${total_faces}):
 			let i_b = dv.getUint32(i_offset+4, true);
 			let i_c = dv.getUint32(i_offset+8, true);
 			let label = "";
+			if(i_a && i_a < first_symbol_string) first_symbol_string = i_a;
 			for(let j = i_a + header_size; j < symbol_table_offset && file[j] != 0; j++) {
 				label += String.fromCharCode(file[j]);
 			}
 			symbols[i] = label;
 			if(i_b) {
 				defined_functions[i_b] = label;
+				if(i_b > last_function) last_function = i_b;
 			}
 			endtext += "\"" + label + "\" " + i_b.toString(16) + " " + i_c.toString(16) + "\n";
 		}
@@ -2399,19 +2404,79 @@ for i in range(0, ${total_faces}):
 		let replacements = {};
 		let replacement_table_offset = dv.getUint32(4 + header_size, true) + header_size;
 		let replacement_table_count = dv.getUint32(8 + header_size, true);
-		endtext += "Function calls: \n";
+		endtext += "Relocations: \n";
 		for(let i = 0; i < replacement_table_count; i++) {
 			let i_offset = i * 12 + replacement_table_offset;
 			let i_a = dv.getUint32(i_offset+0, true);
 			let i_b = dv.getUint32(i_offset+4, true);
 			let i_c = dv.getUint32(i_offset+8, true);
-			endtext += i_a.toString(16) + " " + symbols[i_b >> 8] + " " + i_c.toString(16) + "\n";
+			let type_str = ["R_MIPS_NONE", "R_MIPS_16", "R_MIPS_32", "R_MIPS_REL32", "R_MIPS_26", "R_MIPS_HI16", "R_MIPS_LO16", "R_MIPS_GPREL16", "R_MIPS_LITERAL", "R_MIPS_GOT16", "R_MIPS_PC16", "R_MIPS_CALL16", "R_MIPS_GPREL32"][i_b & 255];
+			endtext += i_a.toString(16) + " " + type_str + " " + symbols[i_b >> 8] + " " + i_c.toString(16) + "\n";
 			replacements[i_a] = symbols[i_b >> 8];
+		}
+
+		let bs_offset = dv.getUint32(0x34 + header_size, true) + header_size;
+		let tag_addr = 0;
+		if(bs_offset) {
+			while(true) {
+				let tag_byte = dv.getUint8(bs_offset);
+				let tag = tag_byte & 3;
+				if(!(tag_byte & 0xFC)) {
+					tag_addr = dv.getUint32(bs_offset+1, true);
+					bs_offset += 5;
+					if(!tag_addr) break;
+				} else {
+					tag_addr += tag_byte & 0xFC;
+					bs_offset += 1;
+				}
+				
+				if(tag == 0) {
+					let target_addr = dv.getUint16(tag_addr+header_size, true)
+					endtext += tag_addr.toString(16) + " R_MIPS_LO16 " + target_addr.toString(16) + "\n";
+					// FUN_002a3a20(tag_addr, 6, dv.getUint16(tag_addr+header_size, true));
+				} if(tag == 1) {
+					let lookahead_bs_offset = bs_offset;
+					let lookahead_tag_addr = tag_addr;
+					while(true) {
+						let lookahead_tag_byte = dv.getUint8(lookahead_bs_offset);
+						if((lookahead_tag_byte & 0xFC) == 0) {
+							lookahead_tag_addr = dv.getUint32(lookahead_bs_offset+1, true);
+							if(lookahead_tag_addr == 0) {
+								throw new Error("Error code 10");
+							}
+							lookahead_bs_offset += 5;
+						} else {
+							lookahead_tag_addr += lookahead_tag_byte & 0xFC;
+							lookahead_bs_offset += 1;
+						}
+						if(!(lookahead_tag_byte & 3)) break;
+					}
+					let target_addr = (0x10000 * dv.getUint16(tag_addr+header_size, true) + dv.getInt16(lookahead_tag_addr+header_size, true));
+					datasymbol_addrs.add(target_addr);
+					endtext += tag_addr.toString(16) + " R_MIPS_HI16 " + target_addr.toString(16) + "\n";
+					// FUN_002a3a20(tag_addr, 5, 0x10000 * dv.getUint16(tag_addr+header_size, true) + dv.getUint16(lookahead_tag_addr+header_size, true));
+				} else if(tag == 2) {
+					let target_addr = (dv.getUint32(tag_addr+header_size, true) & 0x3ffffff) << 2;
+					if(target_addr > last_function) last_function = target_addr;
+					endtext += tag_addr.toString(16) + " R_MIPS_26 " + (target_addr).toString(16) + "\n";
+					if(!defined_functions[target_addr]) defined_functions[target_addr] = "f_" + target_addr.toString(16);
+					// FUN_002a3a20(tag_addr, 4, (dv.getUint32(tag_addr+header_size, true) & 0x3ffffff) << 2);
+				} else if(tag == 3) {
+					let target_addr = dv.getUint32(tag_addr+header_size, true);
+					endtext += tag_addr.toString(16) + " R_MIPS_32 " + target_addr.toString(16) + "\n";
+					// FUN_002a3a20(tag_addr, 2, dv.getUint32(tag_addr+header_size, true));
+				}
+			}
+		}
+
+		let code_end = first_symbol_string;
+		for(let addr of datasymbol_addrs) {
+			if(addr < code_end && addr > last_function) code_end = addr;
 		}
 		
 		let branches = [];
 		let branch_vis = [];
-		for(let i = 0x100; i < file.length-header_size; i += 4) {
+		for(let i = 0x100; i < code_end; i += 4) {
 			branch_vis[i] = [];
 			let val = dv.getUint32(i+header_size, true);
 			if(val == 0) continue;
@@ -2423,12 +2488,12 @@ for i in range(0, ${total_faces}):
 			if(!inst) continue;
 			if(/{b}/g.test(inst.args)) {
 				branches.push([i, (((val & 0xFFFF) << 16 >> 14) + i + 4)]);
-			} else if(inst.name == "jal" && !replacements[i]) {
+			}/* else if(inst.name == "jal" && !replacements[i]) {
 				let fun = ((val & 0x3FFFFFF) << 2);
 				if(fun < file.length-header_size && i >= 0x100 && !defined_functions[fun]) {
 					defined_functions[fun] = "f_" + fun.toString(16);
 				}
-			}
+			}*/
 		}
 		branches.sort((a,b) => {
 			return Math.abs(a[1]-a[0]) - Math.abs(b[1]-b[0]);
@@ -2480,7 +2545,7 @@ for i in range(0, ${total_faces}):
 			}
 		}
 		
-		for(let i = 0x100; i < file.length-header_size; i += 4) {
+		for(let i = 0x100; i < code_end; i += 4) {
 			let val = dv.getUint32(i+header_size, true);
 			if(defined_functions[i]) {
 				text += defined_functions[i] + ":\n";
@@ -2513,6 +2578,24 @@ for i in range(0, ${total_faces}):
 				args = args.replace(/{fr4}/g, "f"+((val >> 6) & 0x1F).toString().padStart(2,0));
 				args = args.replace(/{b}/g, "0x" + (((val & 0xFFFF) << 16 >> 14) + i + 4).toString(16));
 				text += inst.name + " " + args;
+			}
+			text += "\n";
+		}
+		text += "\n";
+		datasymbol_addrs = [...datasymbol_addrs, first_symbol_string].sort((a,b)=>{return a-b;}).filter((item) => {return item >= code_end});
+		for(let i = 0; i < datasymbol_addrs.length-1; i++) {
+			let start = datasymbol_addrs[i];
+			let end = datasymbol_addrs[i+1];
+			text += "d_" + start.toString(16) + "\n";
+			for(let i = start; i < end; i += 16) {
+				let slice = file.slice(header_size+i, Math.min(header_size+i+16, header_size+end));
+				let line = (i).toString(16).padStart(6,0) + " " + [...slice].map(item => {return item.toString(16).padStart(2,0);}).join(" ").padEnd(52) + [...slice].map((item)=>{return dos_chars[item]}).join("");
+				line += "   ";
+				for(let j = 0; j < 4; j++) {
+					if(header_size+i+j*4+3 < file.length)
+					line += dv.getFloat32(header_size + i + j*4, true).toPrecision(6).padStart(16, " ");
+				}
+				text += line + "\n";
 			}
 			text += "\n";
 		}
