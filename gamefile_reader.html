@@ -345,7 +345,7 @@ async function load_gamefile() {
 				let indent = 0;
 				while(curr_addr < part.length) {
 					if(part[curr_addr] == 0x49 && part[curr_addr+1] == 0x44 && part[curr_addr+2] == 0x4D) {
-						(function add_file(file_addr, do_adjust = true) {
+						if(!(function add_file(file_addr, do_adjust = true) {
 							let absolute_offset = file_addr + this_sectors[i]*2048;
 							let size = part_dv.getInt32(file_addr+8, true);
 							let header_size = part_dv.getInt16(file_addr+6, true) + 16;
@@ -418,7 +418,7 @@ async function load_gamefile() {
 								indent -= 2;
 							}
 							return true;
-						})(curr_addr);
+						})(curr_addr)) break;
 					} else {
 						if(curr_addr % 2048 == 0) {
 							curr_addr += 2048;
@@ -2376,9 +2376,11 @@ for i in range(0, ${total_faces}):
 		}
 		
 		let symbols = [];
+		let symbols_raw = [];
 		let defined_functions = {};
 		let last_function = 0x100;
 		let first_symbol_string = file.length - header_size;
+		let string_table_end = 0;
 		let datasymbol_addrs = new Set();
 		let symbol_table_offset = dv.getUint32(12 + header_size, true) + header_size;
 		let symbol_table_count = dv.getUint32(16 + header_size, true);
@@ -2388,10 +2390,12 @@ for i in range(0, ${total_faces}):
 			let i_a = dv.getUint32(i_offset+0, true);
 			let i_b = dv.getUint32(i_offset+4, true);
 			let i_c = dv.getUint32(i_offset+8, true);
+			symbols_raw.push([i_a,i_b,i_c]);
 			let label = "";
 			if(i_a && i_a < first_symbol_string) first_symbol_string = i_a;
 			for(let j = i_a + header_size; j < symbol_table_offset && file[j] != 0; j++) {
 				label += String.fromCharCode(file[j]);
+				if(j-header_size+2 > string_table_end) string_table_end = j-header_size+2;
 			}
 			symbols[i] = label;
 			if(i_b) {
@@ -2400,10 +2404,25 @@ for i in range(0, ${total_faces}):
 			}
 			endtext += "\"" + label + "\" " + i_b.toString(16) + " " + i_c.toString(16) + "\n";
 		}
+		let symbol_table_bytes = new ArrayBuffer(16 * (symbols_raw.length+1));
+		let symbol_table_dv = new DataView(symbol_table_bytes);
+		for(let i = 0; i < symbols_raw.length+1; i++) {
+			let [i_a,i_b,i_c] = i == symbols_raw.length ? [first_symbol_string, 0, 0x20000] : symbols_raw[i];
+			let type = (i_c & 0xFFFF0000) >>> 16;
+			symbol_table_dv.setUint32(i*16 + 0, i_a - first_symbol_string, true); // st_name
+			symbol_table_dv.setUint32(i*16 + 4, i_b, true); // st_value
+			symbol_table_dv.setUint32(i*16 + 8, 0, true); // st_size
+			if(i == 0) symbol_table_dv.setUint8(i*16 + 12, 0);
+			else if(i == symbols_raw.length) symbol_table_dv.setUint8(i*16 + 12, 0x3);
+			else symbol_table_dv.setUint8(i*16 + 12, 0x10); // st_info
+			symbol_table_dv.setUint8(i*16 + 13, 0x0); // st_other
+			symbol_table_dv.setUint16(i*16 + 14, (i == 0 || type == 2) ? 1 : 0, true); // st_shndx
+		}
 		
 		let replacements = {};
 		let replacement_table_offset = dv.getUint32(4 + header_size, true) + header_size;
 		let replacement_table_count = dv.getUint32(8 + header_size, true);
+		let relocations = [];
 		endtext += "Relocations: \n";
 		for(let i = 0; i < replacement_table_count; i++) {
 			let i_offset = i * 12 + replacement_table_offset;
@@ -2413,6 +2432,7 @@ for i in range(0, ${total_faces}):
 			let type_str = ["R_MIPS_NONE", "R_MIPS_16", "R_MIPS_32", "R_MIPS_REL32", "R_MIPS_26", "R_MIPS_HI16", "R_MIPS_LO16", "R_MIPS_GPREL16", "R_MIPS_LITERAL", "R_MIPS_GOT16", "R_MIPS_PC16", "R_MIPS_CALL16", "R_MIPS_GPREL32"][i_b & 255];
 			endtext += i_a.toString(16) + " " + type_str + " " + symbols[i_b >> 8] + " " + i_c.toString(16) + "\n";
 			replacements[i_a] = symbols[i_b >> 8];
+			relocations.push([i_a, i_b]);
 		}
 
 		let bs_offset = dv.getUint32(0x34 + header_size, true) + header_size;
@@ -2429,6 +2449,8 @@ for i in range(0, ${total_faces}):
 					tag_addr += tag_byte & 0xFC;
 					bs_offset += 1;
 				}
+
+				relocations.push([tag_addr, [6,5,4,2][tag]]);
 				
 				if(tag == 0) {
 					let target_addr = dv.getUint16(tag_addr+header_size, true)
@@ -2467,6 +2489,15 @@ for i in range(0, ${total_faces}):
 					// FUN_002a3a20(tag_addr, 2, dv.getUint32(tag_addr+header_size, true));
 				}
 			}
+		}
+
+		let rel_table = new ArrayBuffer(8 * relocations.length);
+		let rel_table_dv = new DataView(rel_table);
+		for(let i = 0; i < relocations.length; i++) {
+			let [i_a,i_b] = relocations[i];
+			if((i_b >>> 8) == 0) i_b = (symbols_raw.length << 8) | (i_b & 0xFF);
+			rel_table_dv.setUint32(i*8 + 0, i_a, true);
+			rel_table_dv.setUint32(i*8 + 4, i_b, true);
 		}
 
 		let code_end = first_symbol_string;
@@ -2599,6 +2630,67 @@ for i in range(0, ${total_faces}):
 			}
 			text += "\n";
 		}
+		let save_button = document.createElement("input");
+		save_button.type = "button";
+		save_button.value = "Export to ELF";
+		save_button.onclick = () => {
+			let fn = prompt("Filename? (no extension");
+			if(!fn) return;
+
+			const shstr_str = "\0.rel\0.strtab\0.shstrtab\0.symtab\0";
+
+			let parts = [];
+			parts.push(new Uint8Array([
+				0x7f, 0x45, 0x4c, 0x46, 0x01, 0x01, 0x01, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x01, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28, 0x00,
+				0x06, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+			]));
+			let data_off = parts[parts.length-1].length;
+			parts.push(file.subarray(header_size, first_symbol_string+header_size));
+			
+			let rel_off = data_off + parts[parts.length-1].length;
+			parts.push(new Uint8Array(rel_table));
+
+			let str_off = rel_off + parts[parts.length-1].length;
+			let string_table_len = string_table_end - first_symbol_string;
+			string_table_len = (string_table_len + 3) & ~3;
+			parts.push(file.subarray(first_symbol_string+header_size, first_symbol_string+string_table_len+header_size));
+
+			let shstr_off = str_off + parts[parts.length-1].length;
+			let shstr_len = (shstr_str.length + 3) & ~3;
+			let shstr_arr = new Uint8Array(shstr_len);
+			for(let i = 0; i < shstr_str.length; i++) shstr_arr[i] = shstr_str.charCodeAt(i);
+			parts.push(shstr_arr);
+
+			let sym_off = shstr_off + parts[parts.length-1].length;
+			parts.push(new Uint8Array(symbol_table_bytes));
+
+			let header_off = sym_off + parts[parts.length-1].length;
+			let header_bytes = new Uint8Array(6 * 0x28);
+			let header_dv = new DataView(header_bytes.buffer);
+			for(let i = 0; i < 6; i++) {
+				let o = i*0x28;
+				header_dv.setUint32(o + 0x00, [0, 0, 1, 6, 14, 24][i], true); // sh_name
+				header_dv.setUint32(o + 0x04, [0, 1, 9, 3, 3, 2][i], true); // sh_type
+				header_dv.setUint32(o + 0x08, [0, 7, 0, 0, 0, 0][i], true); // sh_flags
+				header_dv.setUint32(o + 0x0C, 0, true); // sh_addr
+				header_dv.setUint32(o + 0x10, [0, data_off, rel_off, str_off, shstr_off, sym_off][i], true); // sh_offset
+				header_dv.setUint32(o + 0x14, i == 0 ? 0 : parts[i].length, true); // sh_size
+				header_dv.setUint32(o + 0x18, [0, 0, 5, 0, 0, 3][i], true); // sh_link
+				header_dv.setUint32(o + 0x1C, [0, 0, 1, 0, 0, 1][i], true); // sh_info
+				header_dv.setUint32(o + 0x20, [0, 0x40, 4, 1, 1, 4][i], true); // sh_addralign
+				header_dv.setUint32(o + 0x24, [0, 0, 0x8, 0, 0, 0x10][i], true); // sh_entsize
+			}
+			parts.push(header_bytes);
+			new DataView(parts[0].buffer).setUint32(0x20, header_off, true);
+			saveAs(new Blob(parts), fn + ".o");
+		}
+		contentelem.appendChild(save_button);
 		let pre = document.createElement("pre");
 		pre.textContent = text + endtext;
 		contentelem.appendChild(pre);
