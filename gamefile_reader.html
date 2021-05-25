@@ -2259,8 +2259,8 @@ for i in range(0, ${total_verts}):
 			continue
 		group = obj.vertex_groups.get(vg_names[j])
 		if group == None:
-			group = obj.vertex_groups.new(vg_names[j])
-		group.add(i, vg_weights[j], 'REPLACE')
+			group = obj.vertex_groups.new(name=vg_names[j])
+		group.add([i], vg_weights[j], 'REPLACE')
 
 mesh.materials.clear()
 
