@@ -284,6 +284,57 @@ const mips_instructions = {
 	"011100???????????????11011101000": {name: "qfsrv", args: "{r3}, {r1}, {r2}"},
 	"011111??????????????????????????": {name: "sq", args: "{r2}, {imm}({r1})"},
 }
+/** @type{Array<[OfflineAudioContext,HTMLDivElement,HTMLDivElement]>} */
+let render_list = [];
+let showing_progress = false;
+
+function progress_frame() {
+	showing_progress = true;
+	try {
+		for(let item of render_list) {
+			item[2].style.width = (item[0].currentTime / item[0].length * item[0].sampleRate * 100) + "%";
+		}
+		if(render_list.length)
+			window.requestAnimationFrame(progress_frame);
+		else
+			showing_progress = false;
+		return;
+	} finally {
+		showing_progresss = false;
+	}
+}
+
+function add_rendering_context(ctx, name) {
+	let container = document.createElement("div");
+	
+	let name_div = document.createElement("div");
+	name_div.textContent = name;
+	container.appendChild(name_div);
+	
+	let progressbar = document.createElement("div");
+	progressbar.classList.add("progressbar");
+	container.appendChild(progressbar);
+
+	let fill = document.createElement("div");
+	fill.classList.add("fill");
+	fill.style.width = "0%";
+	progressbar.appendChild(fill);
+
+	document.getElementById("progress-list").appendChild(container);
+	
+	let item = [ctx, container, fill];
+	render_list.push(item);
+	
+	if(!showing_progress) {
+		progress_frame();
+	}
+
+	ctx.addEventListener("complete", () => {
+		let idx = render_list.indexOf(item);
+		if(idx != -1) render_list.splice(idx, 1);
+		document.getElementById("progress-list").removeChild(container);
+	})
+}
 
 const adsr_rates = new Uint32Array(160);
 for(let i = 0; i < 160; i++) {
@@ -429,7 +480,15 @@ async function load_gamefile() {
 				}
 			} else {
 				if(part_header[24] == 0x53 && part_header[25] == 0x42 && part_header[26] == 0x6C && part_header[27] == 0x6B) {
-					fileelem.textContent = index_string+": Sound bank";
+					fileelem.textContent = index_string+": Sound bank (" + (part_header[0x2e] + (part_header[0x2f] * 256)) + " sounds)";
+					let part_blob = infile.slice(this_sectors[i]*2048, (this_sectors[i]+this_sizes[i])*2048);
+					fileelem.addEventListener("click", (e) => {
+						for(let othersel of document.querySelectorAll(".file-item-selected")) {
+							othersel.classList.remove("file-item-selected");
+						}
+						fileelem.classList.add("file-item-selected");
+						set_sblk(part_blob);
+					});
 				} else if(part_header[32] == 0x53 && part_header[33] == 0x42 && part_header[34] == 0x76 && part_header[35] == 0x32) {
 					fileelem.textContent = index_string+": Music file \"" + [...part_header.slice(44,48)].map((cc)=>{return String.fromCharCode(cc);}).join("") + "\"";
 					let part_blob = infile.slice(this_sectors[i]*2048, (this_sectors[i]+this_sizes[i])*2048);
@@ -638,6 +697,8 @@ async function set_sbv2(blob) {
 			player.channel_mask = calc_channel_mask();
 			player.reverb_enabled = reverb_toggle.checked;
 			player.play();
+
+			add_rendering_context(ctx, "Rendering: " + sbv2.tag + i);
 			
 			let buf = await ctx.startRendering();
 			saveAs(new Blob([to_wav(buf)], {type:'audio/wav'}), sbv2.tag + i + ".wav");
@@ -756,7 +817,6 @@ async function set_sbv2(blob) {
 		vis_button.type = "button";
 		vis_button.value = "Save Visualisation (.ply)";
 		vis_button.addEventListener("click", () => {
-			for(let chan = 0; chan < 16; chan++) {
 			let total_verts = 0;
 			let total_faces = 0;
 			let verts_str = "";
@@ -773,7 +833,6 @@ async function set_sbv2(blob) {
 			let channel_programs = new Array(16);
 			
 			for(let event of track.events) {
-				if(event.channel != chan) continue;
 				if(event.type == "program_change") {
 					channel_programs[event.channel] = event.program;
 				}
@@ -902,8 +961,7 @@ property float blue
 element face ${total_faces}
 property list uchar int vertex_index
 end_header
-${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + "_" + chan + '.ply');
-			}
+${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 		});
 		contentelem.appendChild(vis_button);
 		contentelem.appendChild(playback_display);
@@ -1458,17 +1516,117 @@ async function set_kpv(blob) {
 	let sound_length = dv.getUint32(0x0C, true);
 	let sample_rate = dv.getUint32(0x10, true);
 	let num_channels = dv.getUint32(0x14, true);
+	let num_chunks = (file.length - sound_start) / sound_length;
 	
 	let pre = document.createElement("pre");
 	pre.textContent = `Sound length: ${sound_length} bytes, ${(sound_length * 24 / 16 / sample_rate).toFixed(3)} seconds
 Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
+	console.log(num_chunks + " chunks");
+	let channels = [];
+	let urls = [];
+	for(let i = 0; i < num_channels; i++) {
+		let chunk_arr = new Uint8Array(sound_length / num_channels * num_chunks);
+		for(let j = 0; j < num_chunks; j++) {
+			let begin = (j+i/num_channels) * sound_length + sound_start;
+			let end = begin + sound_length / num_channels;
+			chunk_arr.set(file.subarray(begin, end), j*sound_length/num_channels);
+		}
+		let sound = decode_adpcm(chunk_arr, 0, chunk_arr.length, sample_rate);
+		let wav = new Blob([to_wav(sound.buffer)], {type:'audio/wav'});
+		let url = URL.createObjectURL(wav);
+		urls.push(url);
+		let sound_elem = document.createElement("audio");
+		sound_elem.src = url;
+		sound_elem.controls = true;
+		contentelem.appendChild(sound_elem);
+		channels.push(sound);
+	}
+	dispose_old = () => {for(let url of urls) URL.revokeObjectURL(url);};
 	
-	let sound = decode_adpcm(file, sound_start, file.length, sample_rate);
-	let source = audio_context.createBufferSource();
-	source.buffer = sound.buffer;
-	source.connect(audio_context.destination);
-	source.start();
+	/*let stereo_sound = new AudioBuffer({numberOfChannels: 2, length: (file.length - sound_start) / 2, sampleRate: sample_rate});
+	let pre_buf = sound.buffer.getChannelData(0);
+	let left_buf = stereo_sound.getChannelData(0);
+	let right_buf = stereo_sound.getChannelData(1);
+
+	let chunk_samples = sound_length / 16 * 28 / 2;
+	for(let chunk = 0; chunk < num_chunks; chunk++) {
+		let pre_off = chunk * chunk_samples*2;
+		let stereo_off = chunk * chunk_samples;
+		for(let i = 0; i < chunk_samples; i++) {
+			left_buf[stereo_off+i] = pre_buf[pre_off+i];
+			right_buf[stereo_off+i] = pre_buf[pre_off+i+chunk_samples];
+		}
+	}*/
+}
+
+async function set_sblk(blob) {
+	if(dispose_old) {
+		dispose_old();
+		dispose_old = null;
+	}
+
+	let file = new Uint8Array(await new Response(blob).arrayBuffer());
+	let dv = new DataView(file.buffer);
+	let contentelem = document.getElementById("content");
+	contentelem.innerHTML = "";
+
+	let header_size = dv.getUint32(0x08, true);
+	let num_sounds = dv.getUint16(0x16 + header_size, true);
+	let soundarr_ptr = dv.getUint32(0x1c + header_size, true) + header_size;
+	let soundarr2_ptr = dv.getUint32(0x20 + header_size, true) + header_size;
+	let soundarr3_ptr = dv.getUint32(0x34 + header_size, true) + header_size;
+	let sound_start = dv.getUint32(0x10, true);
+	//let sound_end = dv.getUint32(0x14, true) + sound_start;
+	let urls = [];
+	let elem = document.createElement("pre");
+	elem.textContent += "Sound start: " + sound_start+"\n";
+	for(let i = 0; i < num_sounds; i++) {
+		try {
+			elem.textContent += "Sound " + i + ":\n"
+			let sound_ptr = i * 12 + soundarr_ptr;
+			if(dv.getUint8(sound_ptr + 4) == 0) {
+				elem.textContent += "Blank!\n";
+			} else {
+				elem.textContent += "  Default volume: " + dv.getUint16(sound_ptr, true) + "\n";
+				elem.textContent += "  Default _2: " + dv.getUint16(sound_ptr+2, true) + "\n";
+				let num_sa2 = dv.getUint8(sound_ptr + 4);
+				let sound_2_ptr = dv.getInt32(sound_ptr + 8, true) + soundarr2_ptr;
+				elem.textContent += "  Num entries: " + num_sa2 + "\n";
+				for(let j = 0; j < num_sa2; j++) {
+					let entry2 = sound_2_ptr + j*8;
+					let e2_type = dv.getUint8(entry2 + 3); // Index into function table at 0x21188
+					elem.textContent += "    Type: " + e2_type + "\n";
+					if(e2_type == 1) {
+						let offset = dv.getUint32(entry2, true) & 0xFFFFFF;
+						elem.textContent += "      Offset: " + offset + "\n";
+						elem.textContent += "      Other: " + dv.getUint32(entry2 + 4, true) + "\n";
+						let sound_3_ptr = offset + soundarr3_ptr;
+						let this_sound_start = sound_start + dv.getUint32(sound_3_ptr + 0x10, true);
+						elem.textContent += "      Sound start: " + (this_sound_start - sound_start);
+						let sound = decode_adpcm(file, this_sound_start, file.length, 16000);
+						let wav = new Blob([to_wav(sound.buffer)], {type:'audio/wav'});
+						let url = URL.createObjectURL(wav);
+						urls.push(url);
+						let sound_elem = document.createElement("audio");
+						sound_elem.src = url;
+						sound_elem.controls = true;
+						contentelem.appendChild(elem);
+						elem = document.createElement("pre");
+						contentelem.appendChild(sound_elem);
+						
+					} else {
+						elem.textContent += "      " + dv.getUint32(entry2, true).toString(16).padStart(8, 0) + " " + dv.getUint32(entry2+4, true).toString(16).padStart(8, 0)+"\n";
+					}
+				}
+			}
+		} catch(e) {
+			elem.textContent += e + "\n";
+		}
+		//await new Promise((resolve) => {setTimeout(resolve, 1);});
+	}
+	if(elem.textContent) contentelem.appendChild(elem);
+	dispose_old = () => {for(let url of urls) URL.revokeObjectURL(url);};
 }
 
 async function set_file(blob, parent, force_hex) {
@@ -3688,6 +3846,39 @@ canvas {
   -ms-interpolation-mode: nearest-neighbor;
 }
 
+#progress-list {
+	position: fixed;
+	right: 0px;
+	top: 0px;
+	display: inline-block;
+	margin: 0px;
+	padding: 0px;
+}
+#progress-list > div {
+	margin: 0px;
+	background-color: rgba(0, 0, 0, 0.5);
+	color: white;
+	border-bottom: 1px solid white;
+	padding: 10px;
+
+}
+.progressbar {
+	width: 400px;
+	height: 20px;
+	margin: 0px;
+	border: 1px solid #ccffcc;
+	background-color: #ccffcc44;
+	position: relative;
+}
+.progressbar .fill {
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	height: 100%;
+	width: 0%;
+	background-color: #ccffcc;
+}
+
 </style>
 </head>
 <body>
@@ -3700,6 +3891,8 @@ canvas {
 	<div>The file from the demo disk will *not* work.</div>
 	<input type="file" id="fileinput">
 	<input type="button" onclick="load_gamefile()" value="Load">
+</div>
+<div id="progress-list">
 </div>
 </body>
 </html>
