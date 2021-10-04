@@ -4,6 +4,11 @@
 <script src="FileSaver.js"></script>
 <script src="three.min.js"></script>
 <script>
+let logging_enabled = false;
+function do_log(...args) {
+	if(logging_enabled) console.log(...args);
+}
+
 THREE.ShaderChunk.color_pars_vertex = `
 #ifdef USE_COLOR
 	varying vec4 vColor;
@@ -361,18 +366,18 @@ async function load_gamefile() {
 	let this_sectors = file_sectors;
 	let this_sizes = file_sizes;
 	if(infile.size == 156485632) {
-		console.log("Using demo sectors");
+		do_log("Using demo sectors");
 		this_sectors = demo_file_sectors;
 		this_sizes = demo_file_sizes;
 	} else if(infile.size == 1902393344) {
-		console.log("Using Oct. 13 prototype build sectors");
+		do_log("Using Oct. 13 prototype build sectors");
 		this_sectors = oct13_file_sectors;
 		this_sizes = oct13_file_sizes;
 	} else if(infile.size != 1902385152) {
 		this_sectors = [0];
 		this_sizes = [Math.ceil(infile.size / 2048)];
 	} else {
-		console.log("Using retail sectors");
+		do_log("Using retail sectors");
 	}
 	
 	for(let i = 0; i < this_sectors.length; i++) {
@@ -462,7 +467,7 @@ async function load_gamefile() {
 									item_elem += header_size+file_addr;
 									let model_addr = part_dv.getUint32(item_elem + 0x1d0, true);
 									let other_addr = part_dv.getUint32(item_elem + 0x1d4, true);
-									//console.log(model_addr + ", " + other_addr);
+									//do_log(model_addr + ", " + other_addr);
 									if(model_addr) add_file(model_addr + header_size+file_addr, false);
 									if(other_addr) add_file(other_addr + header_size+file_addr, false);
 								}
@@ -539,13 +544,13 @@ async function set_sbv2(blob) {
 		dispose_old = null;
 	}
 	let file = new Uint8Array(await new Response(blob).arrayBuffer());
-	console.log(file.length);
+	do_log(file.length);
 	let dv = new DataView(file.buffer);
 	let contentelem = document.getElementById("content");
 	contentelem.innerHTML = "";
 	
 	let sbv2 = new SBv2Decoder(file);
-	console.log(sbv2);
+	do_log(sbv2);
 	
 	let sound_start = dv.getUint32(16, true);
 	let sound_length = dv.getUint32(20, true);
@@ -638,7 +643,7 @@ async function set_sbv2(blob) {
 			player.channel_mask = calc_channel_mask();
 			player.reverb_enabled = reverb_toggle.checked;
 			player.play();
-			console.log(player);
+			do_log(player);
 			
 			let do_vis = () => {
 				if(player.curr_timeout == null) return;
@@ -976,11 +981,12 @@ Sound length: ${sound_length}
 	
 	for(let i = 0; i < num_instruments; i++) {
 		let instrument_volume = file[instruments_start + (i*0x8) + 0x1];
+		let instrument_pan = dv.getInt16(instruments_start + (i*0x8) + 0x2, true);
 		let num_regions = file[instruments_start + (i*0x8)];
 		let region_offset = dv.getUint32(instruments_start + (i*0x8) + 0x4, true) + sbv2_start;
 		
 		let instrument_elem = document.createElement("pre");
-		instrument_elem.textContent = `=== Program 0x${i.toString(16)} ===\nVolume: ${instrument_volume}`;
+		instrument_elem.textContent = `=== Program 0x${i.toString(16)} ===\nVolume: ${instrument_volume}\nPan: ${instrument_pan}`;
 		contentelem.appendChild(instrument_elem);
 		
 		let instrument_obj = {
@@ -1021,6 +1027,7 @@ Sound length: ${sound_length}
 			region_text += `  ADSR1: 0x${region_adsr1.toString(16).padStart(4,0)}\n`;
 			region_text += `  ADSR2: 0x${region_adsr2.toString(16).padStart(4,0)}\n`;
 			region_text += `  Flags: 0x${region_flags.toString(16).padStart(4,0)}\n`;
+			region_text += `  Bytes: [${[...file.subarray(region_offset+j*0x18,region_offset+(j+1)*0x18)].map(number => {return number.toString(16).padStart(2,'0')}).join(" ")}]\n`;
 			region_elem.textContent = region_text;
 			contentelem.appendChild(region_elem);
 			
@@ -1073,11 +1080,20 @@ class MidiPlayer {
 		this.channel_programs.fill(undefined);
 		this.channel_gains = new Array(16);
 		this.channel_gains_reverb = new Array(16);
+		this.channel_pans = new Array(16);
+		this.channel_pans_reverb = new Array(16);
+		this.channel_pan_controls = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+		this.channel_pitch_shift = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
 		for(let i = 0; i < 16; i++) {
+			let pan = this.channel_pans[i] = this.ctx.createStereoPanner();
+			pan.connect(this.ctx.destination);
+			let pan_reverb = this.channel_pans_reverb[i] = this.ctx.createStereoPanner();
+			pan_reverb.connect(this.convolver_node);
+
 			let gain = this.channel_gains[i] = this.ctx.createGain();
-			gain.connect(this.ctx.destination);
+			gain.connect(pan);
 			let gain_reverb = this.channel_gains_reverb[i] = this.ctx.createGain();
-			gain_reverb.connect(this.convolver_node);
+			gain_reverb.connect(pan_reverb);
 		}
 		this.current_time = this.ctx.currentTime;
 		this.event_index = 0;
@@ -1126,6 +1142,26 @@ class MidiPlayer {
 			}
 		}
 	};
+
+	update_pan(channel) {
+		let program = this.channel_programs[channel];
+		let instrument = this.sbv2.instruments[program];
+		let pan = (instrument ? instrument.pan : 0) * Math.PI / 180;
+		pan += Math.asin(this.channel_pan_controls[channel]);
+		this.channel_pans[channel].pan.setValueAtTime(Math.sin(pan), this.current_time);
+		this.channel_pans_reverb[channel].pan.setValueAtTime(Math.sin(pan), this.current_time);
+	}
+
+	update_pitch(channel) {
+		let channel_arr = this.channels[channel];
+		if(!channel_arr) return;
+		for(let i = 0; i < channel_arr.length; i++) {
+			let note = channel_arr[i];
+			if(note) {
+				note.source_node.playbackRate.setValueAtTime(note.base_pitch * (1.122462 ** this.channel_pitch_shift[channel]), this.current_time);
+			}
+		}
+	}
 	
 	process_midi() {
 		while(true) {
@@ -1136,6 +1172,7 @@ class MidiPlayer {
 				this.event_index++;
 				if(event.type == "program_change") {
 					this.channel_programs[event.channel] = event.program;
+					this.update_pan(event.channel);
 				} else if(event.type == "note_on") { // note on event
 					let note_num = event.note;
 					let velocity = event.velocity;
@@ -1163,7 +1200,10 @@ class MidiPlayer {
 						playing_note.source_node.loop = region.sound.loop;
 						playing_note.source_node.loopStart = region.sound.loop_start;
 						playing_note.source_node.loopEnd = region.sound.loop_end;
-						playing_note.source_node.playbackRate.value = handle_midi_pitch(region.pitch_a, region.pitch_b, note_num) / 4096;
+						playing_note.base_pitch = handle_midi_pitch(region.pitch_a, region.pitch_b, note_num) / 4096;
+						playing_note.source_node.playbackRate.value = playing_note.base_pitch * (1.122462 ** this.channel_pitch_shift[event.channel]);
+						playing_note.pitch_a = region.pitch_a;
+						playing_note.pitch_b = region.pitch_b;
 						playing_note.source_node.start(this.current_time);
 						playing_note.region = region;
 						playing_note.instrument = this.sbv2.instruments[program];
@@ -1228,11 +1268,16 @@ class MidiPlayer {
 					if(control_function == 0x7) {
 						this.channel_gains[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
 						this.channel_gains_reverb[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
+					} else if(control_function == 0xa) {
+						this.channel_pan_controls[event.channel] = (parameter / 64) - 1;
+						this.update_pan(event.channel);
 					} else {
 						console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
 					}
 				} else if(event.type == "pitch_bend") { // Pitch bend
-					console.log(`Pitch shift ${event.bend}`);
+					//do_log(`Pitch shift channel ${event.channel} bend ${event.bend}`);
+					this.channel_pitch_shift[event.channel] = event.bend;
+					this.update_pitch(event.channel);
 				} else if(event.type == "end") { // Meta event
 					this.loops_left--;
 					this.event_index = 0;
@@ -1254,7 +1299,13 @@ class MidiPlayer {
 				}
 			} else {
 				if(this.loops_left) {
-					this.curr_timeout = setTimeout(this.process_midi.bind(this), (this.current_time - this.ctx.currentTime) * 1000);
+					let wait = (this.current_time - this.ctx.currentTime) * 1000;
+					if(wait < -250) {
+						this.curr_timeout = null;
+						this.process_midi();
+					} else {
+						this.curr_timeout = setTimeout(this.process_midi.bind(this), wait);
+					}
 				}
 				return;
 			}
@@ -1280,11 +1331,13 @@ class SBv2Decoder {
 		
 		for(let i = 0; i < num_instruments; i++) {
 			let instrument_volume = file[instruments_start + (i*0x8) + 0x1];
+			let instrument_pan = dv.getInt16(instruments_start + (i*0x8) + 0x2, true);
 			let num_regions = file[instruments_start + (i*0x8)];
 			let region_offset = dv.getUint32(instruments_start + (i*0x8) + 0x4, true) + sbv2_start;
 			
 			let instrument_obj = {
 				volume: instrument_volume / 127,
+				pan: instrument_pan,
 				regions: []
 			};
 			this.instruments.push(instrument_obj);
@@ -1309,7 +1362,8 @@ class SBv2Decoder {
 					adsr1: region_adsr1,
 					adsr2: region_adsr2,
 					flags: region_flags,
-					sound: decode_adpcm(file, sound_start+region_sample_offset, sound_start+sound_length, 48000)
+					sound: decode_adpcm(file, sound_start+region_sample_offset, sound_start+sound_length, 48000),
+					bytes: file.subarray(region_offset + j*0x18, region_offset + j*0x18+0x18)
 				};
 				instrument_obj.regions.push(region_obj)
 			}
@@ -1430,7 +1484,7 @@ class SBv2Decoder {
 						track.events.push({
 							type:"pitch_bend",
 							channel: event_type & 0xF,
-							bend: (pitch_msb * 128 + pitch_lsb) / 8192,
+							bend: (pitch_msb * 128 + pitch_lsb) / 8192 - 1,
 							seconds,
 							ticks
 						});
@@ -1462,7 +1516,7 @@ class SBv2Decoder {
 						// maybe one day I'll look at the diassembly a bit closer and see
 						while(file[current_midi_pointer++] != 0xF7 && current_midi_pointer < file.length);
 					} else if(event_type == 0xF3) {
-						console.log("Song select: " + file[current_midi_pointer++]);
+						do_log("Song select: " + file[current_midi_pointer++]);
 					} else {
 						console.warn(new Error('Unrecognized MIDI event ' + (event_type ? event_type.toString(16) : event_type) + ' at 0x' + current_midi_pointer.toString(16) + ' (' + current_midi_pointer + ')'));
 						break;
@@ -1522,7 +1576,7 @@ async function set_kpv(blob) {
 	pre.textContent = `Sound length: ${sound_length} bytes, ${(sound_length * 24 / 16 / sample_rate).toFixed(3)} seconds
 Sample rate: ${sample_rate} Hz`;
 	contentelem.appendChild(pre);
-	console.log(num_chunks + " chunks");
+	do_log(num_chunks + " chunks");
 	let channels = [];
 	let urls = [];
 	for(let i = 0; i < num_channels; i++) {
@@ -1639,12 +1693,12 @@ async function set_file(blob, parent, force_hex) {
 	let header_size = dv.getInt16(6, true) + 16;
 	let contentelem = document.getElementById("content");
 	if(!force_hex && file[3] == 0x4 && file[4] == 0x4 && file[5] == 0x0) {
-		console.log("TEXTURE");
+		do_log("TEXTURE");
 		let img_data_start = dv.getInt32(header_size + 4, true) + header_size;
 		let props_start = dv.getInt32(header_size+8, true)+header_size;
 		let img_width = dv.getInt32(props_start+64, true) * 2;
 		let img_height = dv.getInt32(props_start+68, true) * 2;
-		console.log(img_data_start + ", " + img_width + ", " + img_height);
+		do_log(img_data_start + ", " + img_width + ", " + img_height);
 		
 		let canvas = document.createElement("canvas");
 		let swizzle_map;
@@ -1768,7 +1822,7 @@ async function set_file(blob, parent, force_hex) {
 										let xoffs = (Math.floor(row4/4) % 2) != 0 ? xoffs2 : xoffs1;
 										let x = block + xoffs[blocksect + (blockhalf*4)]*4 + blockcol;
 										let y = row4 + oddness + ((blocksect % 2)*2);
-										//console.log("(" + x + ", " + y + ")" + " row4:" + row4 + " oddness: " + oddness + "block: " + block);
+										//do_log("(" + x + ", " + y + ")" + " row4:" + row4 + " oddness: " + oddness + "block: " + block);
 										if(curr_img_byte >= file.length)
 											continue;
 										let index = file[curr_img_byte++];
@@ -1826,7 +1880,7 @@ async function set_file(blob, parent, force_hex) {
 			redraw(curr_pal_x, curr_pal_y, fourbit);
 		});
 		canvas.addEventListener("keydown", (e) => {
-			console.log(e.which);
+			do_log(e.which);
 			if(curr_pal_x != undefined && curr_pal_y != undefined) {
 				if(e.which == 188 && (curr_pal_x > 0 || curr_pal_y > 0)) {
 					curr_pal_x -= 32;
@@ -1841,7 +1895,7 @@ async function set_file(blob, parent, force_hex) {
 						curr_pal_y += fourbit?16:32;
 					}
 				}
-				console.log(curr_pal_x + ", " + curr_pal_y);
+				do_log(curr_pal_x + ", " + curr_pal_y);
 				redraw(curr_pal_x, curr_pal_y, fourbit);
 			}
 		});
@@ -1939,7 +1993,7 @@ async function set_file(blob, parent, force_hex) {
 	} else if(!force_hex && file[3] == 0x1 && (file[4] == 0xD || file[4] == 0x3 || file[4] == 0xC) && file[5] == 0x0) {
 		contentelem.innerHTML = "";
 		let camera = new THREE.PerspectiveCamera(70, 1.333, 0.01, 30000);
-		console.log(camera);
+		do_log(camera);
 		
 		let dispose_list = [];
 		dispose_old = () => {
@@ -1975,7 +2029,7 @@ async function set_file(blob, parent, force_hex) {
 				dispose_list.push(material.texture);
 			}
 		}
-		console.log(materials);
+		do_log(materials);
 		
 		let scene = new THREE.Scene();
 		scene.background = new THREE.Color(0x404080);
@@ -2724,7 +2778,7 @@ for i in range(0, ${total_faces}):
 		branches.sort((a,b) => {
 			return Math.abs(a[1]-a[0]) - Math.abs(b[1]-b[0]);
 		});
-		console.log(branches);
+		do_log(branches);
 		// Box drawing characters:
 		// │─┌└
 		let brwidth = 0;
@@ -3577,7 +3631,7 @@ function get_map_color(index) {
 
 
 // this is basically a JS translation of some assembly code.
-// a0/a1: bytes 2/3 of region, a2: note number, a3: not sure
+// a0/a1: bytes 2/3 of region, a2: note number, a3: pitch shift
 function handle_midi_pitch(a0, a1, a2, a3 = 0) {
 	let v0, v1, t0, t1, t2, s0;
 	// some look up tables
