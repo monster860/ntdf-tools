@@ -827,14 +827,8 @@ async function set_sbv2(blob) {
 			let verts_str = "";
 			let faces_str = "";
 			const time_scale = 0.25;
-			let min_note = 127;
-			let max_note = 0;
-			for(let event of track.events) {
-				if(event.type == "note_on") {
-					max_note = Math.max(max_note, event.note + 1);
-					min_note = Math.min(min_note, event.note);
-				}
-			}
+			let min_note = sbv2.min_note;
+			let max_note = sbv2.max_note;
 			let channel_programs = new Array(16);
 			
 			for(let event of track.events) {
@@ -1326,6 +1320,8 @@ class SBv2Decoder {
 		let num_instruments = dv.getUint16(sbv2_start + 0x16, true);
 		
 		this.instruments = [];
+		this.min_note = 127;
+		this.max_note = 0;
 		
 		this.tag = [...file.slice(44,48)].map((cc)=>{return String.fromCharCode(cc);}).join("");
 		
@@ -1442,6 +1438,8 @@ class SBv2Decoder {
 								}
 							}
 						} else {
+							if(note < this.min_note) this.min_note = note;
+							if(note > this.max_note) this.max_note = note;
 							track.events.push({
 								type:"note_on",
 								channel: event_type & 0xF,
