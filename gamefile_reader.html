@@ -4,7 +4,7 @@
 <script src="FileSaver.js"></script>
 <script src="three.min.js"></script>
 <script>
-let logging_enabled = false;
+let logging_enabled = true;
 function do_log(...args) {
 	if(logging_enabled) console.log(...args);
 }
@@ -42,6 +42,9 @@ const dos_chars = ["\u002E", "\u263A", "\u263B", "\u2665", "\u2666", "\u2663", "
 
 let infile;
 let audio_context;
+let midi_access;
+let midi_select = document.createElement("select");
+let midi_handler = () => {};
 let convolver_node;
 let convolver_buffer;
 const note_base = 2 ** (1/12);
@@ -966,6 +969,92 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 		contentelem.appendChild(playback_display);
 		
 	}
+
+	let webmidi_play_button = document.createElement("input");
+	webmidi_play_button.type = "button";
+	webmidi_play_button.value = "Start WebMIDI";
+	webmidi_play_button.addEventListener("click", async () => {
+		setupWebMidi();
+		if(stop_playing) { stop_playing(); stop_playing = null; }
+		let playing = true;
+		
+		let player = new MidiPlayer(sbv2, null, audio_context);
+		player.reverb_enabled = true;
+		do_log(player);
+
+		midi_handler = (e) => {
+			let data = e.data;
+			if((data[0] & 0xF0) == 0x90) {
+				player.handle_event({
+					type: "note_on",
+					channel: data[0] & 0x0F,
+					note: data[1],
+					velocity: data[2] / 127
+				});
+			} else if((data[0] & 0xF0) == 0x80) {
+				player.handle_event({
+					type: "note_off",
+					channel: data[0] & 0x0F,
+					note: data[1],
+				});
+			} else if((data[0] & 0xF0) == 0xB0) {
+				player.handle_event({
+					type: "control_change",
+					channel: data[0] & 0x0F,
+					control_function: data[1],
+					parameter: data[2]
+				});
+			} else if((data[0] & 0xF0) == 0xE0) {
+				player.handle_event({
+					type: "pitch_bend",
+					channel: data[0] & 0x0F,
+					bend: (data[2] * 128 + data[1]) / 8192 - 1
+				})
+			} else if((data[0] & 0xF0) == 0xC0) {
+				player.handle_event({
+					type: "program_change",
+					channel: data[0] & 0xF,
+					program: data[1]
+				});
+				if(""+data[1] != webmidi_program_selector.value) {
+					webmidi_program_selector.value = ""+data[1];
+				}
+			}
+		}
+
+		player.handle_event({
+			type: "program_change",
+			channel: 0,
+			program: 0
+		});
+		webmidi_program_selector.value = "0";
+		
+		stop_playing = () => {
+			playing = false;
+			midi_handler = null;
+			player.stop();
+		};
+	});
+	contentelem.appendChild(webmidi_play_button);
+	
+	let webmidi_stop_button = document.createElement("input");
+	webmidi_stop_button.type = "button";
+	webmidi_stop_button.value = "Stop";
+	webmidi_stop_button.addEventListener("click", () => {
+		if(stop_playing) { stop_playing(); stop_playing = null; }
+	});
+	contentelem.appendChild(webmidi_stop_button);
+	let webmidi_program_selector = document.createElement("input");
+	webmidi_program_selector.type = "number";
+	webmidi_program_selector.min = "0";
+	webmidi_program_selector.max = "127";
+	webmidi_program_selector.addEventListener("input", () => {
+		do_log(webmidi_program_selector.value);
+		if(midi_handler) midi_handler({data: [0xC0, +webmidi_program_selector.value & 0xFF]})
+	})
+	contentelem.appendChild(webmidi_program_selector);
+
+	contentelem.appendChild(midi_select);
 	
 	let pre = document.createElement("pre");
 	pre.textContent = `Sound start: ${sound_start}
@@ -1049,6 +1138,46 @@ Sound length: ${sound_length}
 			contentelem.appendChild(button);
 		}
 	}
+}
+
+async function setupWebMidi() {
+	if(midi_access) return;
+	
+	let access = await navigator.requestMIDIAccess();
+	if(midi_access) return;
+	midi_access = access;
+
+	let select_names = [];
+	function update_midi_inputs() {
+		let old_select_name = null;
+		if(midi_select.length > 0) old_select_name = select_names[midi_select.selectedIndex];
+		select_names = [];
+		midi_select.innerHTML = "";
+		for(let [key, value] of midi_access.inputs) {
+			select_names.push(key);
+			let option = document.createElement("option");
+			option.text = value.manufacturer + " " + value.name + " version " + value.version + ", " + value.state + ", " + value.connection;
+			midi_select.add(option);
+			if(key == old_select_name) midi_select.selectedIndex = midi_select.length - 1;
+		}
+		update_midi_select();
+	}
+	function midi_message_handler(e) {
+		console.log(e);
+		if(midi_handler) midi_handler(e);
+	}
+	let current_input = null;
+	function update_midi_select() {
+		let select_name = select_names[midi_select.selectedIndex];
+		let input = midi_access.inputs.get(select_name);
+		if(input == current_input) return;
+		do_log("Changing midi input");
+		if(current_input) current_input.removeEventListener("midimessage", midi_message_handler);
+		if(input) input.addEventListener("midimessage", midi_message_handler);
+	}
+	update_midi_inputs();
+	midi_access.addEventListener("statechange", update_midi_inputs);
+	midi_select.addEventListener("change", update_midi_select);
 }
 
 class MidiPlayer {
@@ -1156,6 +1285,123 @@ class MidiPlayer {
 			}
 		}
 	}
+
+	handle_event(event) {
+		if(event.type == "program_change") {
+			this.channel_programs[event.channel] = event.program;
+			this.update_pan(event.channel);
+		} else if(event.type == "note_on") { // note on event
+			let note_num = event.note;
+			let velocity = event.velocity;
+			this.stop_note(event.channel, note_num);
+			let playing_note = {gain_node: this.ctx.createGain(), release_gain_node: this.ctx.createGain(), source_node: this.ctx.createBufferSource()};
+			let program = this.channel_programs[event.channel] || 0;
+			let region = null;
+			for(let r of this.sbv2.instruments[program].regions) {
+				if(note_num >= r.note_start && note_num <= r.note_end) {
+					region = r; // technically regions can overlap and both will play but meh I really don't feel like doing that and I'm pretty sure it wasn't used since it would sound like shit.
+					break;
+				}
+			}
+			if(region && ((1 << event.channel) & this.channel_mask)) {
+				playing_note.velocity = velocity;
+				playing_note.base_gain = (this.sbv2.instruments[program].volume * region.volume * velocity) ** 2 * (665 / 2048)
+				playing_note.gain_node.gain.setValueAtTime(0, this.current_time);
+				if(!(region.flags & 0x10))
+					playing_note.gain_node.connect(this.channel_gains[event.channel]);
+				if((region.flags & 0x01) && this.reverb_enabled)
+					playing_note.gain_node.connect(this.channel_gains_reverb[event.channel]);
+				playing_note.release_gain_node.connect(playing_note.gain_node);
+				playing_note.source_node.buffer = region.sound.buffer;
+				playing_note.source_node.connect(playing_note.release_gain_node);
+				playing_note.source_node.loop = region.sound.loop;
+				playing_note.source_node.loopStart = region.sound.loop_start;
+				playing_note.source_node.loopEnd = region.sound.loop_end;
+				playing_note.base_pitch = handle_midi_pitch(region.pitch_a, region.pitch_b, note_num) / 4096;
+				playing_note.source_node.playbackRate.value = playing_note.base_pitch * (1.122462 ** this.channel_pitch_shift[event.channel]);
+				playing_note.pitch_a = region.pitch_a;
+				playing_note.pitch_b = region.pitch_b;
+				playing_note.source_node.start(this.current_time);
+				playing_note.region = region;
+				playing_note.instrument = this.sbv2.instruments[program];
+				// do ADSR. Or at least some of it.
+				let attack_rate = (region.adsr1 >> 8) & 0x7F;
+				let attack_mode = region.adsr1 >> 15;
+				let curr_adsr_time = 0;
+				if(attack_mode) {
+					if(adsr_rates[(attack_rate ^ 0x7F) - 0x18 + 32] > 0) {
+						let time_a = this.current_time + (0x60000000 / adsr_rates[(attack_rate ^ 0x7F) - 0x18 + 32]) / 48000;
+						playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain * 0.75, time_a);
+						curr_adsr_time = time_a + (0x1FFFFFFF / adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32]) / 48000;
+						playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain, curr_adsr_time);
+					}
+				} else {
+					if(adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32] > 0) {
+						curr_adsr_time = this.current_time + (0x7FFFFFFF / adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32]) / 48000;
+						playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain, curr_adsr_time);
+					}
+				}
+				let curr_adsr_percent = 1;
+				
+				let decay_rate = (region.adsr1 >> 4) & 0xF;
+				let sustain_level = region.adsr1 & 0xF;
+				let sustain_fraction = ((1/16)*(sustain_level + 1));
+				let decay_time_constant = 0x7FFFFFFF / adsr_rates[((decay_rate^0x1f)*4)-0xC+32] / 48000;
+				curr_adsr_time += decay_time_constant * Math.log(1 / sustain_fraction);
+				curr_adsr_percent *= sustain_fraction;
+				playing_note.gain_node.gain.exponentialRampToValueAtTime((curr_adsr_percent * playing_note.base_gain == 0 ? 0.01 : curr_adsr_percent * playing_note.base_gain), curr_adsr_time);
+				
+				let sustain_mode = region.adsr2 >> 14;
+				let sustain_rate = (region.adsr2 >> 6) & 0x7F;
+				if(sustain_mode & 0x2) { // decreasing
+					if(sustain_mode & 0x4) { // exponential
+						let sustain_time_constant = 0x7FFFFFFF / adsr_rates[(sustain_rate^0x7F)-0xF + 32] / 48000;
+						playing_note.gain_node.gain.setTargetAtTime(0, curr_adsr_time, sustain_time_constant);
+					} else {
+						if(adsr_rates[(sustain_rate ^ 0x7F)-0xF + 32] > 0) {
+							curr_adsr_time += (0x7FFFFFFF * curr_adsr_percent / adsr_rates[(sustain_rate ^ 0x7F)-0xF + 32]) / 48000;
+							playing_note.gain_node.gain.linearRampToValueAtTime(0, curr_adsr_time);
+						}
+					}
+				} else if(curr_adsr_percent < 1) {
+					// okay I could emulate increasing sustain level..... buuuuuuuut
+					// the only time this game uses increasing sustain is when the sustain level is 1... which means it doesn't actually increase.
+					// so yeah
+					console.warn("Increasing sustain unimplemented");
+				}
+				
+				this.channels[event.channel][note_num] = playing_note;
+			} else if(!region) {
+				console.warn("No region! (Channel " + (event.channel) + ", program " + program + ", note " + note_num + ")");
+			} else {
+				this.channels[event.channel][note_num] = true;
+			}
+			
+		} else if(event.type == "note_off") { // note off event (this does not follow the midi standard... **GOD DAMN IT SONY WHY CANT YOU FOLLOW STANDARDS** (this music format is a sony thing not an idol minds thing))
+			this.stop_note(event.channel, event.note);
+		} else if(event.type == "control_change") { // Control mode change
+			let control_function = event.control_function;
+			let parameter = event.parameter;
+			if(control_function == 0x7) {
+				this.channel_gains[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
+				this.channel_gains_reverb[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
+			} else if(control_function == 0xa) {
+				this.channel_pan_controls[event.channel] = (parameter / 64) - 1;
+				this.update_pan(event.channel);
+			} else {
+				console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
+			}
+		} else if(event.type == "pitch_bend") { // Pitch bend
+			//do_log(`Pitch shift channel ${event.channel} bend ${event.bend}`);
+			this.channel_pitch_shift[event.channel] = event.bend;
+			this.update_pitch(event.channel);
+		} else if(event.type == "end") { // Meta event
+			this.loops_left--;
+			this.event_index = 0;
+			comparison -= event.seconds;
+			force_skip = true;
+		}
+	}
 	
 	process_midi() {
 		while(true) {
@@ -1164,120 +1410,7 @@ class MidiPlayer {
 			while(this.event_index < this.track.events.length && this.track.events[this.event_index].seconds <= comparison && !force_skip) {
 				let event = this.track.events[this.event_index];
 				this.event_index++;
-				if(event.type == "program_change") {
-					this.channel_programs[event.channel] = event.program;
-					this.update_pan(event.channel);
-				} else if(event.type == "note_on") { // note on event
-					let note_num = event.note;
-					let velocity = event.velocity;
-					this.stop_note(event.channel, note_num);
-					let playing_note = {gain_node: this.ctx.createGain(), release_gain_node: this.ctx.createGain(), source_node: this.ctx.createBufferSource()};
-					let program = this.channel_programs[event.channel] || 0;
-					let region = null;
-					for(let r of this.sbv2.instruments[program].regions) {
-						if(note_num >= r.note_start && note_num <= r.note_end) {
-							region = r; // technically regions can overlap and both will play but meh I really don't feel like doing that and I'm pretty sure it wasn't used since it would sound like shit.
-							break;
-						}
-					}
-					if(region && ((1 << event.channel) & this.channel_mask)) {
-						playing_note.velocity = velocity;
-						playing_note.base_gain = (this.sbv2.instruments[program].volume * region.volume * velocity) ** 2 * (665 / 2048)
-						playing_note.gain_node.gain.setValueAtTime(0, this.current_time);
-						if(!(region.flags & 0x10))
-							playing_note.gain_node.connect(this.channel_gains[event.channel]);
-						if((region.flags & 0x01) && this.reverb_enabled)
-							playing_note.gain_node.connect(this.channel_gains_reverb[event.channel]);
-						playing_note.release_gain_node.connect(playing_note.gain_node);
-						playing_note.source_node.buffer = region.sound.buffer;
-						playing_note.source_node.connect(playing_note.release_gain_node);
-						playing_note.source_node.loop = region.sound.loop;
-						playing_note.source_node.loopStart = region.sound.loop_start;
-						playing_note.source_node.loopEnd = region.sound.loop_end;
-						playing_note.base_pitch = handle_midi_pitch(region.pitch_a, region.pitch_b, note_num) / 4096;
-						playing_note.source_node.playbackRate.value = playing_note.base_pitch * (1.122462 ** this.channel_pitch_shift[event.channel]);
-						playing_note.pitch_a = region.pitch_a;
-						playing_note.pitch_b = region.pitch_b;
-						playing_note.source_node.start(this.current_time);
-						playing_note.region = region;
-						playing_note.instrument = this.sbv2.instruments[program];
-						// do ADSR. Or at least some of it.
-						let attack_rate = (region.adsr1 >> 8) & 0x7F;
-						let attack_mode = region.adsr1 >> 15;
-						let curr_adsr_time = 0;
-						if(attack_mode) {
-							if(adsr_rates[(attack_rate ^ 0x7F) - 0x18 + 32] > 0) {
-								let time_a = this.current_time + (0x60000000 / adsr_rates[(attack_rate ^ 0x7F) - 0x18 + 32]) / 48000;
-								playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain * 0.75, time_a);
-								curr_adsr_time = time_a + (0x1FFFFFFF / adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32]) / 48000;
-								playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain, curr_adsr_time);
-							}
-						} else {
-							if(adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32] > 0) {
-								curr_adsr_time = this.current_time + (0x7FFFFFFF / adsr_rates[(attack_rate ^ 0x7F) - 0x10 + 32]) / 48000;
-								playing_note.gain_node.gain.linearRampToValueAtTime(playing_note.base_gain, curr_adsr_time);
-							}
-						}
-						let curr_adsr_percent = 1;
-						
-						let decay_rate = (region.adsr1 >> 4) & 0xF;
-						let sustain_level = region.adsr1 & 0xF;
-						let sustain_fraction = ((1/16)*(sustain_level + 1));
-						let decay_time_constant = 0x7FFFFFFF / adsr_rates[((decay_rate^0x1f)*4)-0xC+32] / 48000;
-						curr_adsr_time += decay_time_constant * Math.log(1 / sustain_fraction);
-						curr_adsr_percent *= sustain_fraction;
-						playing_note.gain_node.gain.exponentialRampToValueAtTime((curr_adsr_percent * playing_note.base_gain == 0 ? 0.01 : curr_adsr_percent * playing_note.base_gain), curr_adsr_time);
-						
-						let sustain_mode = region.adsr2 >> 14;
-						let sustain_rate = (region.adsr2 >> 6) & 0x7F;
-						if(sustain_mode & 0x2) { // decreasing
-							if(sustain_mode & 0x4) { // exponential
-								let sustain_time_constant = 0x7FFFFFFF / adsr_rates[(sustain_rate^0x7F)-0xF + 32] / 48000;
-								playing_note.gain_node.gain.setTargetAtTime(0, curr_adsr_time, sustain_time_constant);
-							} else {
-								if(adsr_rates[(sustain_rate ^ 0x7F)-0xF + 32] > 0) {
-									curr_adsr_time += (0x7FFFFFFF * curr_adsr_percent / adsr_rates[(sustain_rate ^ 0x7F)-0xF + 32]) / 48000;
-									playing_note.gain_node.gain.linearRampToValueAtTime(0, curr_adsr_time);
-								}
-							}
-						} else if(curr_adsr_percent < 1) {
-							// okay I could emulate increasing sustain level..... buuuuuuuut
-							// the only time this game uses increasing sustain is when the sustain level is 1... which means it doesn't actually increase.
-							// so yeah
-							console.warn("Increasing sustain unimplemented");
-						}
-						
-						this.channels[event.channel][note_num] = playing_note;
-					} else if(!region) {
-						console.warn("No region! (Channel " + (event.channel) + ", program " + program + ", note " + note_num + ")");
-					} else {
-						this.channels[event.channel][note_num] = true;
-					}
-					
-				} else if(event.type == "note_off") { // note off event (this does not follow the midi standard... **GOD DAMN IT SONY WHY CANT YOU FOLLOW STANDARDS** (this music format is a sony thing not an idol minds thing))
-					this.stop_note(event.channel, event.note);
-				} else if(event.type == "control_change") { // Control mode change
-					let control_function = event.control_function;
-					let parameter = event.parameter;
-					if(control_function == 0x7) {
-						this.channel_gains[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
-						this.channel_gains_reverb[event.channel].gain.setValueAtTime((parameter / 127) ** 2, this.current_time);
-					} else if(control_function == 0xa) {
-						this.channel_pan_controls[event.channel] = (parameter / 64) - 1;
-						this.update_pan(event.channel);
-					} else {
-						console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
-					}
-				} else if(event.type == "pitch_bend") { // Pitch bend
-					//do_log(`Pitch shift channel ${event.channel} bend ${event.bend}`);
-					this.channel_pitch_shift[event.channel] = event.bend;
-					this.update_pitch(event.channel);
-				} else if(event.type == "end") { // Meta event
-					this.loops_left--;
-					this.event_index = 0;
-					comparison -= event.seconds;
-					force_skip = true;
-				}
+				this.handle_event(event);
 			}
 			this.current_time += this.track.events[this.event_index].seconds - comparison;
 			if(this.ctx instanceof OfflineAudioContext) {
