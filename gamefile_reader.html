@@ -1020,6 +1020,7 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 					webmidi_program_selector.value = ""+data[1];
 				}
 			}
+			player.current_time = audio_context.currentTime;
 		}
 
 		player.handle_event({
