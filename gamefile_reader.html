@@ -975,6 +975,7 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 	webmidi_play_button.value = "Start WebMIDI";
 	webmidi_play_button.addEventListener("click", async () => {
 		setupWebMidi();
+		set_web_midi_enabled(true);
 		if(stop_playing) { stop_playing(); stop_playing = null; }
 		let playing = true;
 		
@@ -1034,6 +1035,7 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 			playing = false;
 			midi_handler = null;
 			player.stop();
+			set_web_midi_enabled(false);
 		};
 	});
 	contentelem.appendChild(webmidi_play_button);
@@ -1141,6 +1143,10 @@ Sound length: ${sound_length}
 	}
 }
 
+let web_midi_enabled = true;
+
+let set_web_midi_enabled = (n) => {web_midi_enabled = n;};
+
 async function setupWebMidi() {
 	if(midi_access) return;
 	
@@ -1170,15 +1176,24 @@ async function setupWebMidi() {
 	let current_input = null;
 	function update_midi_select() {
 		let select_name = select_names[midi_select.selectedIndex];
-		let input = midi_access.inputs.get(select_name);
+		let input = web_midi_enabled ? midi_access.inputs.get(select_name) : null;
 		if(input == current_input) return;
 		do_log("Changing midi input");
-		if(current_input) current_input.removeEventListener("midimessage", midi_message_handler);
-		if(input) input.addEventListener("midimessage", midi_message_handler);
+		if(current_input) {
+			current_input.removeEventListener("midimessage", midi_message_handler);
+			current_input.close();
+		}
+		if(input) {
+			input.addEventListener("midimessage", midi_message_handler);
+			input.open();
+		}
+		current_input = input;
 	}
 	update_midi_inputs();
 	midi_access.addEventListener("statechange", update_midi_inputs);
 	midi_select.addEventListener("change", update_midi_select);
+
+	let set_web_midi_enabled = (n) => {web_midi_enabled = n; update_midi_select();};
 }
 
 class MidiPlayer {
@@ -1389,6 +1404,15 @@ class MidiPlayer {
 			} else if(control_function == 0xa) {
 				this.channel_pan_controls[event.channel] = (parameter / 64) - 1;
 				this.update_pan(event.channel);
+			} else if(control_function == 0x78) {
+				for(let j = 0; j < this.channels[event.channel].length; j++) {
+					if(this.channels[event.channel][j] instanceof Object) {
+						this.channels[event.channel][j].source_node.stop();
+						this.channels[event.channel][j] = null;
+					}
+				}
+			} else if(control_function == 0x7B) {
+				for(let i = 0; i < 128; i++) this.stop_note(event.channel, i);
 			} else {
 				console.warn(`Unrecognized control mode change: 0x${control_function.toString(16)}(${parameter})`);
 			}
