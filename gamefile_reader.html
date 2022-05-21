@@ -1423,8 +1423,7 @@ class MidiPlayer {
 		} else if(event.type == "end") { // Meta event
 			this.loops_left--;
 			this.event_index = 0;
-			comparison -= event.seconds;
-			force_skip = true;
+			return true;
 		}
 	}
 	
@@ -1435,7 +1434,11 @@ class MidiPlayer {
 			while(this.event_index < this.track.events.length && this.track.events[this.event_index].seconds <= comparison && !force_skip) {
 				let event = this.track.events[this.event_index];
 				this.event_index++;
-				this.handle_event(event);
+				let ended = this.handle_event(event);
+				if(ended) {
+					force_skip = true;
+					comparison -= event.seconds;
+				}
 			}
 			this.current_time += this.track.events[this.event_index].seconds - comparison;
 			if(this.ctx instanceof OfflineAudioContext) {
