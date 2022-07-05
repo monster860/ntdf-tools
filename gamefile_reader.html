@@ -626,6 +626,22 @@ async function set_sbv2(blob) {
 		contentelem.appendChild(document.createTextNode("Reverb"));
 		contentelem.appendChild(document.createElement("br"));
 		
+		let loop_count = document.createElement("input");
+		loop_count.type = "number";
+		loop_count.min = 1;
+		loop_count.value = 1;
+		contentelem.appendChild(document.createTextNode("Loop count: "));
+		contentelem.appendChild(loop_count);		
+		contentelem.appendChild(document.createTextNode("\t"));
+		
+		let silence_seconds = document.createElement("input");
+		silence_seconds.type = "number";
+		silence_seconds.min = 0;
+		silence_seconds.value = 0;
+		contentelem.appendChild(document.createTextNode("Seconds of silence at end: "));
+		contentelem.appendChild(silence_seconds);		
+		contentelem.appendChild(document.createElement("br"));
+		
 		function calc_channel_mask() {
 			let mask = 0;
 			for(let i = 0; i < 16; i++) {
@@ -699,9 +715,9 @@ async function set_sbv2(blob) {
 				let buf = await ctx.startRendering();
 				saveAs(new Blob([to_wav(buf)], {type:'audio/wav'}), sbv2.tag + i + "_" + chan + ".wav");
 			}*/
-			let ctx = new OfflineAudioContext(2, (track.seconds + 5)*48000, 48000);
+			let ctx = new OfflineAudioContext(2, (track.seconds+silence_seconds.value/loop_count.value)*48000*loop_count.value, 48000);
 				
-			let player = new MidiPlayer(sbv2, track, ctx);
+			let player = new MidiPlayer(sbv2, track, ctx, loop_count.value);
 			player.channel_mask = calc_channel_mask();
 			player.reverb_enabled = reverb_toggle.checked;
 			player.play();
@@ -1197,7 +1213,7 @@ async function setupWebMidi() {
 }
 
 class MidiPlayer {
-	constructor(sbv2, track, ctx) {
+	constructor(sbv2, track, ctx, loop = 1) {
 		this.sbv2 = sbv2;
 		this.track = track;
 		this.ctx = ctx;
@@ -1205,7 +1221,7 @@ class MidiPlayer {
 			this.convolver_node = this.ctx.createConvolver();
 			this.convolver_node.connect(ctx.destination);
 			this.convolver_node.buffer = convolver_buffer;
-			this.loops_left = 1;
+			this.loops_left = loop;
 		} else {
 			this.convolver_node = convolver_node;
 			this.loops_left = Infinity;
