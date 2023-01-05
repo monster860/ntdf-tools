@@ -970,6 +970,13 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 		
 	}
 
+	let webmidi_reverb_toggle = document.createElement("input");
+	webmidi_reverb_toggle.type = "checkbox";
+	webmidi_reverb_toggle.checked = true;
+	contentelem.appendChild(webmidi_reverb_toggle);
+	contentelem.appendChild(document.createTextNode("Reverb"));
+	contentelem.appendChild(document.createElement("br"));
+
 	let webmidi_play_button = document.createElement("input");
 	webmidi_play_button.type = "button";
 	webmidi_play_button.value = "Start WebMIDI";
@@ -980,10 +987,10 @@ ${verts_str}${faces_str}`], {type:'text/plain'}), sbv2.tag + i + '.ply');
 		let playing = true;
 		
 		let player = new MidiPlayer(sbv2, null, audio_context);
-		player.reverb_enabled = true;
 		do_log(player);
 
 		midi_handler = (e) => {
+			player.reverb_enabled = webmidi_reverb_toggle.checked;
 			player.current_time = audio_context.currentTime;
 			let data = e.data;
 			if((data[0] & 0xF0) == 0x90) {
